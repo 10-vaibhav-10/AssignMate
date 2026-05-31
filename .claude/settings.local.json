@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(flutter --version 2>&1)",
+      "PowerShell(dart --version 2>&1)"
+    ]
+  }
+}

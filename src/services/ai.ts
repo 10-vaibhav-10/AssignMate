@@ -11,9 +11,14 @@ import { getDaysUntilDue, todayStr } from '../utils';
  *   using the GROQ_API_KEY environment variable set in the Vercel dashboard.
  *
  * The API key NEVER reaches the browser.
+ *
+ * On Android (Capacitor): VITE_API_BASE_URL is set to the deployed Vercel URL
+ * in .env.android so the app calls https://your-app.vercel.app/api/ai.
+ * On web: VITE_API_BASE_URL is empty → relative URL /api/ai (same origin).
  */
-const API_URL = '/api/ai';
-const MODEL   = 'llama-3.3-70b-versatile';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+const API_URL  = `${API_BASE}/api/ai`;
+const MODEL    = 'llama-3.3-70b-versatile';
 
 /* ── Shared fetch helper ─────────────────────────────────────────── */
 

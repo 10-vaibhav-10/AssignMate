@@ -39,15 +39,13 @@ function groqProxy(keys: string[]): Plugin {
           return;
         }
 
-        // Pick the next key in round-robin order
-        const apiKey = keys[keyIndex % keys.length];
+        // Advance the counter now; the retry loop starts from this position
+        const startIdx = keyIndex % keys.length;
         keyIndex++;
 
         let body = '';
         req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
         req.on('end', async () => {
-          // Retry across remaining keys on 429
-          const startIdx = (keyIndex - 1) % keys.length;
 
           for (let attempt = 0; attempt < keys.length; attempt++) {
             const key = keys[(startIdx + attempt) % keys.length];

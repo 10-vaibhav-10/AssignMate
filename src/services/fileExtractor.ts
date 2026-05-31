@@ -7,6 +7,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 
 const VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
+// On Android (Capacitor) this is set to the Vercel URL via .env.android
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+
 /** Extract text from a PDF file (client-side, no API needed) */
 export async function extractFromPdf(file: File): Promise<string> {
   const arrayBuffer = await file.arrayBuffer();
@@ -39,7 +42,7 @@ export async function extractFromPdf(file: File): Promise<string> {
 export async function extractFromImage(file: File): Promise<string> {
   const base64 = await fileToBase64(file);
 
-  const res = await fetch('/api/ai', {
+  const res = await fetch(`${API_BASE}/api/ai`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

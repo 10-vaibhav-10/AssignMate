@@ -2,7 +2,7 @@
  * Vercel Serverless Function — POST /api/ai
  *
  * Proxies requests to the Groq API using round-robin key rotation.
- * The browser never receives any API key.
+ * The browser / Capacitor app never receives any API key.
  *
  * Environment variables (set in Vercel project settings or .env.local):
  *
@@ -17,6 +17,16 @@
  */
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+/**
+ * CORS headers — required so the Capacitor Android app (origin: capacitor://localhost)
+ * can call this endpoint cross-origin.
+ */
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
 
 /** Collect all configured API keys in order. */
 function getKeys(): string[] {
@@ -38,9 +48,17 @@ function getKeys(): string[] {
 }
 
 export default async function handler(request: Request): Promise<Response> {
+  /* ── CORS preflight (Capacitor sends this before the real POST) ── */
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
   /* Only allow POST */
   if (request.method !== 'POST') {
-    return Response.json({ error: 'Method not allowed' }, { status: 405 });
+    return Response.json(
+      { error: 'Method not allowed' },
+      { status: 405, headers: CORS_HEADERS },
+    );
   }
 
   const keys = getKeys();
@@ -48,7 +66,7 @@ export default async function handler(request: Request): Promise<Response> {
   if (keys.length === 0) {
     return Response.json(
       { error: 'AI service is not configured on this server. Contact the administrator.' },
-      { status: 503 },
+      { status: 503, headers: CORS_HEADERS },
     );
   }
 
@@ -76,7 +94,7 @@ export default async function handler(request: Request): Promise<Response> {
       if (attempt < keys.length - 1) continue;
       return Response.json(
         { error: 'AI proxy encountered a network error. Please try again.' },
-        { status: 500 },
+        { status: 500, headers: CORS_HEADERS },
       );
     }
 
@@ -88,13 +106,13 @@ export default async function handler(request: Request): Promise<Response> {
     const responseText = await upstream.text();
     return new Response(responseText, {
       status: upstream.status,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
     });
   }
 
   // All keys were rate-limited
   return Response.json(
     { error: 'All AI keys are currently rate-limited. Please try again in a moment.' },
-    { status: 429 },
+    { status: 429, headers: CORS_HEADERS },
   );
 }

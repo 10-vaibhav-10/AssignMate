@@ -18,6 +18,10 @@
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
+// Increase Vercel function timeout beyond the 10-second default.
+// Hobby plan: up to 60 s. Pro plan: up to 300 s.
+export const config = { maxDuration: 60 };
+
 /**
  * CORS headers — required so the Capacitor Android app (origin: capacitor://localhost)
  * can call this endpoint cross-origin.

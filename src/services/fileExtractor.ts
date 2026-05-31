@@ -42,29 +42,43 @@ export async function extractFromPdf(file: File): Promise<string> {
 export async function extractFromImage(file: File): Promise<string> {
   const base64 = await fileToBase64(file);
 
-  const res = await fetch(`${API_BASE}/api/ai`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model:      VISION_MODEL,
-      max_tokens: 1500,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type:      'image_url',
-              image_url: { url: `data:${file.type};base64,${base64}` },
-            },
-            {
-              type: 'text',
-              text: 'Extract all text from this assignment document or question paper image. Return only the extracted text, preserving structure. No commentary or explanation.',
-            },
-          ],
-        },
-      ],
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId  = setTimeout(() => controller.abort(), 45_000);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/ai`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model:      VISION_MODEL,
+        max_tokens: 1500,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type:      'image_url',
+                image_url: { url: `data:${file.type};base64,${base64}` },
+              },
+              {
+                type: 'text',
+                text: 'Extract all text from this assignment document or question paper image. Return only the extracted text, preserving structure. No commentary or explanation.',
+              },
+            ],
+          },
+        ],
+      }),
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Image extraction timed out (45 s). Try a smaller image.');
+    }
+    throw new Error('Could not reach the AI service. Check your internet connection.');
+  }
+  clearTimeout(timeoutId);
 
   if (!res.ok) {
     type Err = { error?: string | { message?: string } };

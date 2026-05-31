@@ -31,11 +31,27 @@ type GroqPayload = {
 };
 
 async function callAI(payload: GroqPayload): Promise<string> {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  // 45-second hard timeout — prevents the UI hanging forever on slow networks
+  // or large documents where Groq takes extra processing time.
+  const controller = new AbortController();
+  const timeoutId  = setTimeout(() => controller.abort(), 45_000);
+
+  let res: Response;
+  try {
+    res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('AI request timed out (45 s). The document may be too large — try a shorter text, or try again.');
+    }
+    throw new Error('Could not reach the AI service. Check your internet connection and try again.');
+  }
+  clearTimeout(timeoutId);
 
   if (!res.ok) {
     /* Handle both our proxy error shape { error: "string" }

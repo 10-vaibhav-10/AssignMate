@@ -3,54 +3,73 @@ import type { Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+
+const GEMINI_MODEL_MAP: Record<string, string> = {
+  'llama-3.3-70b-versatile': 'gemini-1.5-flash',
+  'llama-3.1-8b-instant':    'gemini-1.5-flash-8b',
+};
 
 /**
- * Dev-server plugin: intercepts POST /api/ai and forwards to Groq,
- * injecting the server-side API key(s) so the browser never sees them.
+ * Dev-server plugin: intercepts POST /api/ai and forwards to Gemini or Groq,
+ * injecting the server-side API key so the browser never sees it.
  *
- * Supports round-robin across multiple keys (GROQ_API_KEY_1 … _N).
- * Falls back to a single GROQ_API_KEY if no numbered keys are set.
+ * Provider priority (matches api/ai.ts):
+ *   1. GEMINI_API_KEY_1 … _N  (or GEMINI_API_KEY)  → Google Gemini (1 M TPM free)
+ *   2. GROQ_API_KEY_1 … _N    (or GROQ_API_KEY)    → Groq fallback (6 k TPM free)
  *
- * In production this route is handled by api/ai.ts (Vercel serverless function).
+ * Both support round-robin across multiple keys.
  */
-function groqProxy(keys: string[]): Plugin {
-  // Module-level counter: persists for the entire dev-server session,
-  // giving true round-robin across requests.
+function aiProxy(
+  provider: { url: string; keys: string[]; isGemini: boolean },
+): Plugin {
   let keyIndex = 0;
 
   return {
-    name: 'groq-proxy',
+    name: 'ai-proxy',
     configureServer(server) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       server.middlewares.use('/api/ai', (req: any, res: any, next: any) => {
         if (req.method !== 'POST') { next(); return; }
 
-        if (keys.length === 0) {
+        if (provider.keys.length === 0) {
           res.statusCode = 503;
           res.setHeader('Content-Type', 'application/json');
           res.end(
             JSON.stringify({
               error:
-                'No Groq API key found. ' +
-                'Add GROQ_API_KEY_1=gsk_... (or GROQ_API_KEY=gsk_...) to .env.local and restart.',
+                'No AI API key found. Add GEMINI_API_KEY_1=AIza... (recommended) ' +
+                'or GROQ_API_KEY_1=gsk_... to .env.local and restart the dev server. ' +
+                'Free Gemini key: https://aistudio.google.com/app/apikey',
             }),
           );
           return;
         }
 
-        // Advance the counter now; the retry loop starts from this position
-        const startIdx = keyIndex % keys.length;
+        const startIdx = keyIndex % provider.keys.length;
         keyIndex++;
 
-        let body = '';
-        req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+        let rawBody = '';
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString(); });
         req.on('end', async () => {
 
-          for (let attempt = 0; attempt < keys.length; attempt++) {
-            const key = keys[(startIdx + attempt) % keys.length];
+          /* Translate model names when using Gemini */
+          let body = rawBody;
+          if (provider.isGemini) {
             try {
-              const upstream = await fetch(GROQ_URL, {
+              const parsed = JSON.parse(body) as { model?: string };
+              const mapped = parsed.model
+                ? (GEMINI_MODEL_MAP[parsed.model] ?? 'gemini-1.5-flash')
+                : 'gemini-1.5-flash';
+              body = JSON.stringify({ ...parsed, model: mapped });
+            } catch { /* send as-is */ }
+          }
+
+          for (let attempt = 0; attempt < provider.keys.length; attempt++) {
+            const key = provider.keys[(startIdx + attempt) % provider.keys.length];
+            try {
+              const upstream = await fetch(provider.url, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -59,8 +78,8 @@ function groqProxy(keys: string[]): Plugin {
                 body,
               });
 
-              if (upstream.status === 429 && attempt < keys.length - 1) {
-                continue; // try the next key
+              if (upstream.status === 429 && attempt < provider.keys.length - 1) {
+                continue;
               }
 
               const text = await upstream.text();
@@ -69,16 +88,15 @@ function groqProxy(keys: string[]): Plugin {
               res.end(text);
               return;
             } catch (err) {
-              if (attempt < keys.length - 1) continue;
-              console.error('[groq-proxy] upstream error:', err);
-              res.statusCode = 500;
+              if (attempt < provider.keys.length - 1) continue;
+              console.error('[ai-proxy] upstream error:', err);
+              res.statusCode = 502;
               res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Groq proxy error. Check console.' }));
+              res.end(JSON.stringify({ error: 'AI proxy error. Check console.' }));
               return;
             }
           }
 
-          // All keys rate-limited
           res.statusCode = 429;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'All API keys are rate-limited. Try again in a moment.' }));
@@ -89,29 +107,45 @@ function groqProxy(keys: string[]): Plugin {
 }
 
 export default defineConfig(({ mode }) => {
-  // Load ALL env vars for this mode — empty prefix means no VITE_ filter,
-  // so GROQ_API_KEY / GROQ_API_KEY_N are available here but never in the browser bundle.
   const env = loadEnv(mode, process.cwd(), '');
 
-  // Collect keys: numbered first (GROQ_API_KEY_1 … _10), then single fallback
-  const keys: string[] = [];
+  /* Gemini keys take priority */
+  const geminiKeys: string[] = [];
   for (let i = 1; i <= 10; i++) {
-    const k = env[`GROQ_API_KEY_${i}`]?.trim();
-    if (k) keys.push(k);
+    const k = env[`GEMINI_API_KEY_${i}`]?.trim();
+    if (k) geminiKeys.push(k);
   }
-  if (keys.length === 0 && env.GROQ_API_KEY?.trim()) {
-    keys.push(env.GROQ_API_KEY.trim());
+  if (geminiKeys.length === 0 && env.GEMINI_API_KEY?.trim()) {
+    geminiKeys.push(env.GEMINI_API_KEY.trim());
   }
 
-  if (keys.length > 0) {
-    console.log(`[groq-proxy] Loaded ${keys.length} API key${keys.length > 1 ? 's' : ''} — round-robin active`);
+  /* Groq fallback */
+  const groqKeys: string[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const k = env[`GROQ_API_KEY_${i}`]?.trim();
+    if (k) groqKeys.push(k);
+  }
+  if (groqKeys.length === 0 && env.GROQ_API_KEY?.trim()) {
+    groqKeys.push(env.GROQ_API_KEY.trim());
+  }
+
+  let provider: { url: string; keys: string[]; isGemini: boolean };
+  if (geminiKeys.length > 0) {
+    console.log(`[ai-proxy] Using Gemini — ${geminiKeys.length} key${geminiKeys.length > 1 ? 's' : ''} (1M TPM free tier)`);
+    provider = { url: GEMINI_URL, keys: geminiKeys, isGemini: true };
+  } else if (groqKeys.length > 0) {
+    console.log(`[ai-proxy] Using Groq — ${groqKeys.length} key${groqKeys.length > 1 ? 's' : ''} (6k TPM free tier)`);
+    provider = { url: GROQ_URL, keys: groqKeys, isGemini: false };
+  } else {
+    console.warn('[ai-proxy] No API keys found. Add GEMINI_API_KEY_1 or GROQ_API_KEY_1 to .env.local');
+    provider = { url: GROQ_URL, keys: [], isGemini: false };
   }
 
   return {
     plugins: [
       react(),
       tailwindcss(),
-      groqProxy(keys),
+      aiProxy(provider),
     ],
   };
 });

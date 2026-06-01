@@ -117,71 +117,87 @@ const OUTLINE_SYSTEM =
   'Always respond with valid JSON only. No markdown, no code fences, no text outside the JSON.';
 
 function buildOutlinePrompt(text: string): string {
-  // 8 000 chars ≈ 2 000 tokens of outline text.
-  // llama-3.1-8b-instant free tier: 6 000 TPM hard cap.
-  // Groq counts (input tokens + max_tokens) against TPM, so we keep
-  // both sides small:  ~2 000 (text) + ~1 200 (instructions) + 1 500 (max_tokens) ≈ 4 700 TPM.
-  // Assessment tables almost always appear in the first 2–3 pages (~6 000 chars),
-  // so 8 000 chars gives a comfortable read window without blowing the quota.
-  const textSlice = text.slice(0, 8000);
+  // With Gemini as primary provider (1 M TPM free tier) we can read a much larger
+  // slice — enough to capture the Weekly Planner, assessment table AND Section 3
+  // detailed descriptions in one shot.
+  // Groq fallback (6 k TPM): ~3 000 chars of instructions ≈ 750 tokens
+  //   + 12 000 chars of text ≈ 3 000 tokens + max_tokens 1 500 = 5 250 TPM ✓
+  const textSlice = text.slice(0, 12000);
 
-  return `Extract only the formally assessed items from this university subject outline. Today is ${todayStr()}.
+  return `Extract every formally assessed item from this university subject outline. Today is ${todayStr()}.
 
-CRITICAL INSTRUCTIONS — READ CAREFULLY:
+━━━ DOCUMENT STRUCTURE (KOI / King's Own Institute format) ━━━
 
-STEP 1 — Find the FORMAL ASSESSMENT TABLE:
-- Look for a section titled "Assessment Information", "Assessment Details", "Assessment Summary", or "Section 3".
-- This section contains a TABLE with columns like: Assessment Number, Assessment Title/Type, Weight (%), Due Date.
-- This is the ONLY source of truth for assessments. There are typically 3–6 items in this table.
-- IGNORE the "Weekly Schedule", "Teaching Schedule", or "Weekly Planner" section — it is NOT the source.
+The document has THREE sections you must use together:
 
-STEP 2 — What to INCLUDE:
-- Only items explicitly listed in the formal assessment table (with a weight % including 0%).
-- Quizzes, assignments, reports, essays, group projects, presentations listed in that table.
+A) WEEKLY PLANNER (Section 2.4 "Subject Content and Structure")
+   A table with columns: Week (beginning) | Topics | Readings | Expected Work
+   • Each row starts with the week NUMBER and its CALENDAR START DATE,
+     e.g. "Week 5  30 March" or "Week 5 / 30 March".
+   • The "Expected Work" column contains BOLD due-date markers such as:
+       "Assessment 2: Quiz due"
+       "Assignment 1 Due Sunday 11:59 pm"
+       "Assessment 4: Database Privacy and Ethics Report due by Tuesday 9am"
+       "Assessment 2: Demo … conducted in workshop class"
+   ★ USE THESE MARKERS to determine the exact due date for each assessment.
 
-STEP 3 — What to EXCLUDE (these are NOT assessments):
-- Weekly lectures, tutorials, lab sessions, workshops, seminars.
-- Readings, textbook chapters, pre-reading tasks.
-- Any item not listed in the formal assessment table.
-- Generic entries like "Study for exam", "Attend lecture", "Review material".
+B) FORMAL ASSESSMENT TABLE (Section 2.8 "Student Assessment" or "Student Assignment")
+   Columns: Assessment/Assignment Type | When Assessed | Weighting | Learning Outcomes
+   • This is the DEFINITIVE LIST. Include EVERY row, including formative 0% items.
+   • "When Assessed" gives the week number(s) — cross-reference with the Weekly Planner.
 
-STEP 4 — Compute due dates:
-- Find the Week 1 start date from the document (look for phrases like "Classes commence", "Week 1 commences", or a date next to "Week 1").
-- Each week runs Monday–Sunday. Week N starts on Monday of (Week 1 start + (N-1) × 7 days).
-- "Due Week N" or "Due end of Week N" = Sunday of that week.
-- "Due Monday Week N" or "9am Monday Week N" = Monday of that week.
-- "In class Week N" or "In workshop Week N" = Friday of that week.
-- If an explicit date (e.g. "28 April 2026") is given, use that directly.
-- If no date/week is given for an item, use the last day of the trimester (approx Week 12 Sunday).
+C) ASSESSMENT DETAILS (Section 3 "Assessment Details" or "Assignment Details")
+   • Detailed per-assessment descriptions: word limits, submission method, deliverables.
+   • Use these for the "details" field of each assignment.
 
-STEP 5 — For each assessment, look for a DETAILED DESCRIPTION section immediately following the summary table.
-These pages describe word limits, submission methods, learning outcomes, and specific requirements. Use this text for the "details" field.
+━━━ HOW TO CALCULATE EXACT DUE DATES ━━━
 
-Return ONLY a JSON object with this exact structure (no extra keys, no markdown):
+Step 1 — Find Week 1 start date from the Weekly Planner row labelled "Week 1".
+Step 2 — Week N start date = Week1Date + (N-1) × 7 days.
+Step 3 — Apply the rule that matches the bold marker in the Weekly Planner:
+
+  "Due Sunday 11:59 pm" in Week N row        → Week N start + 6 days (Sunday)
+  "Sunday midnight Week N"                   → Week N start + 6 days (Sunday)
+  "Due by Tuesday [time] Week N"             → Week N start + 1 day  (Tuesday)
+  "In class Week N" / "In workshop Week N"   → Week N start           (Monday)
+  "Quiz" / "Test" in Week N row              → Week N start           (Monday)
+  Explicit calendar date (e.g. "28 April")   → use that date directly
+  Multi-week range "Weeks M–N"               → Week N start + 4 days  (Friday of last week)
+  No marker found                            → Week N start + 6 days  (Sunday, conservative)
+
+━━━ SUBJECT NAME ━━━
+
+• Use format: "SUBJECTCODE Full Name in Title Case"
+• Example: "ICT711 Programming and Algorithms"  (NOT "ICT711 PROGRAMMING AND ALGORITHMS T126")
+• Strip the trimester code (T126, T226, etc.) from the name.
+
+━━━ WHAT TO INCLUDE vs EXCLUDE ━━━
+
+INCLUDE: Every row in the Section 2.8 formal table — quizzes, reports, projects,
+presentations, formative items (0% weight). Each is a separate assignment.
+
+EXCLUDE: Weekly tutorial exercises listed in the planner, review questions,
+"Summative graded" session activities, lecture prep, readings.
+
+━━━ OUTPUT FORMAT ━━━
+
+Return ONLY valid JSON — no markdown, no code fences, nothing outside the object:
 {
-  "subject": "Full subject code and name as written in the document (e.g. ICT711 Programming and Algorithms)",
+  "subject": "SUBJECTCODE Full Subject Name",
   "assignments": [
     {
-      "title": "Exact assessment name as listed in the formal table",
-      "details": "Up to 4 sentences: what the student must produce, word/time limit, submission method, key requirements. Use the detailed description pages if available.",
+      "title": "Exact name from Section 2.8 formal table",
+      "details": "2–3 sentences from Section 3: what to submit, word/time limit, submission method, key requirements.",
       "dueDate": "YYYY-MM-DD",
       "difficulty": "easy|medium|hard",
-      "estimatedHours": 5,
+      "estimatedHours": 2,
       "weight": "25%"
     }
   ]
 }
 
-Difficulty guide:
-- easy   → quiz, short in-class test, formative activity (≤10%)
-- medium → group report, presentation, medium written task (1000–2000w)
-- hard   → major individual essay/report (≥2000w), complex project
-
-EstimatedHours guide:
-- 2  → quiz or short test
-- 5  → short assignment (≤1500 words or simple deliverable)
-- 10 → medium report/presentation (1500–2500 words or group project)
-- 20 → major report or project (≥2500 words)
+Difficulty:  easy = formative/quiz/short in-class test | medium = 1 000–2 000w report or presentation | hard = 2 000w+ report, group project with code/implementation, major individual project
+EstimatedHours: 2 = quiz/test | 5 = short report ≤1 500w | 10 = medium 1 500–2 500w or group work | 20 = major project or report ≥2 500w
 
 Subject outline text:
 ${textSlice}`;
@@ -195,7 +211,7 @@ export async function extractAssignmentsFromOutline(
   const content = await callAI({
     model:           MODEL_FAST,  // 8B-instant: ~8× faster, fits within Vercel's 60 s limit
     temperature:     0.1,
-    max_tokens:      800,         // JSON for 3–6 assignments needs ~400–600 tokens; 800 gives headroom
+    max_tokens:      1500,        // 5–6 assignments with rich details needs ~800–1200 tokens; 1500 is safe
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: OUTLINE_SYSTEM },

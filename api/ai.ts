@@ -4,7 +4,7 @@
  * Proxies requests to the Groq API using round-robin key rotation.
  * The browser / Capacitor app never receives any API key.
  *
- * Environment variables (set in Vercel project settings or .env.local):
+ * Environment variables (set in Vercel project settings):
  *
  *   Round-robin mode (recommended — one free Groq account per key):
  *     GROQ_API_KEY_1=gsk_...
@@ -14,23 +14,33 @@
  *
  *   Single-key fallback:
  *     GROQ_API_KEY=gsk_...
+ *
+ * maxDuration is set in vercel.json → functions → api/ai.ts
  */
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// Increase Vercel function timeout beyond the 10-second default.
-// Hobby plan: up to 60 s. Pro plan: up to 300 s.
-export const config = { maxDuration: 60 };
-
 /**
  * CORS headers — required so the Capacitor Android app (origin: capacitor://localhost)
- * can call this endpoint cross-origin.
+ * and any cross-origin caller can reach this endpoint.
  */
-const CORS_HEADERS: Record<string, string> = {
+const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
+
+/**
+ * Safe JSON response helper.
+ * Avoids Response.json() which is NOT available on Vercel's Node 18 runtime
+ * (it was only added in Node 21+).
+ */
+function jsonRes(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...CORS },
+  });
+}
 
 /** Collect all configured API keys in order. */
 function getKeys(): string[] {
@@ -52,71 +62,77 @@ function getKeys(): string[] {
 }
 
 export default async function handler(request: Request): Promise<Response> {
-  /* ── CORS preflight (Capacitor sends this before the real POST) ── */
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
-  }
+  /* Outer safety net — converts any uncaught exception into a clean 500
+     instead of letting Vercel emit an opaque gateway error. */
+  try {
+    /* ── CORS preflight ─────────────────────────────────────────── */
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS });
+    }
 
-  /* Only allow POST */
-  if (request.method !== 'POST') {
-    return Response.json(
-      { error: 'Method not allowed' },
-      { status: 405, headers: CORS_HEADERS },
-    );
-  }
+    /* Only allow POST */
+    if (request.method !== 'POST') {
+      return jsonRes({ error: 'Method not allowed' }, 405);
+    }
 
-  const keys = getKeys();
+    const keys = getKeys();
 
-  if (keys.length === 0) {
-    return Response.json(
-      { error: 'AI service is not configured on this server. Contact the administrator.' },
-      { status: 503, headers: CORS_HEADERS },
-    );
-  }
-
-  const body = await request.text();
-
-  // Pick a random starting key so load distributes evenly across stateless invocations.
-  // On a 429 we walk through the remaining keys until one succeeds.
-  const startIndex = Math.floor(Math.random() * keys.length);
-
-  for (let attempt = 0; attempt < keys.length; attempt++) {
-    const apiKey = keys[(startIndex + attempt) % keys.length];
-
-    let upstream: Response;
-    try {
-      upstream = await fetch(GROQ_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body,
-      });
-    } catch {
-      // Network error — try the next key if available
-      if (attempt < keys.length - 1) continue;
-      return Response.json(
-        { error: 'AI proxy encountered a network error. Please try again.' },
-        { status: 500, headers: CORS_HEADERS },
+    if (keys.length === 0) {
+      return jsonRes(
+        { error: 'AI service is not configured. Add GROQ_API_KEY_1 in Vercel environment variables.' },
+        503,
       );
     }
 
-    // Rate-limited? Try the next key automatically
-    if (upstream.status === 429 && attempt < keys.length - 1) {
-      continue;
+    const body = await request.text();
+
+    // Pick a random starting key so load distributes evenly across stateless invocations.
+    // On a 429 we walk through the remaining keys until one succeeds.
+    const startIndex = Math.floor(Math.random() * keys.length);
+
+    for (let attempt = 0; attempt < keys.length; attempt++) {
+      const apiKey = keys[(startIndex + attempt) % keys.length];
+
+      let upstream: Response;
+      try {
+        upstream = await fetch(GROQ_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization:  `Bearer ${apiKey}`,
+          },
+          body,
+        });
+      } catch (fetchErr) {
+        // Network-level failure — try the next key if available
+        if (attempt < keys.length - 1) continue;
+        console.error('[api/ai] fetch error:', fetchErr);
+        return jsonRes({ error: 'Could not reach AI provider. Please try again.' }, 502);
+      }
+
+      // Rate-limited? Automatically try the next key
+      if (upstream.status === 429 && attempt < keys.length - 1) {
+        continue;
+      }
+
+      const responseText = await upstream.text();
+      return new Response(responseText, {
+        status: upstream.status,
+        headers: { 'Content-Type': 'application/json', ...CORS },
+      });
     }
 
-    const responseText = await upstream.text();
-    return new Response(responseText, {
-      status: upstream.status,
-      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-    });
-  }
+    // All keys were rate-limited
+    return jsonRes(
+      { error: 'All AI keys are currently rate-limited. Please try again in a moment.' },
+      429,
+    );
 
-  // All keys were rate-limited
-  return Response.json(
-    { error: 'All AI keys are currently rate-limited. Please try again in a moment.' },
-    { status: 429, headers: CORS_HEADERS },
-  );
+  } catch (err) {
+    console.error('[api/ai] Unexpected error:', err);
+    return jsonRes(
+      { error: 'Internal server error. Please try again.' },
+      500,
+    );
+  }
 }

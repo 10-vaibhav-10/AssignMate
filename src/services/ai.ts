@@ -19,10 +19,11 @@ import { getDaysUntilDue, todayStr } from '../utils';
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 const API_URL  = `${API_BASE}/api/ai`;
 
-// 70B for per-assignment analysis (complex reasoning, smaller prompt → fast enough)
+// 70B for per-assignment analysis AND outline extraction (complex date math needs smarter model)
 const MODEL      = 'llama-3.3-70b-versatile';
-// 8B-instant for outline extraction (structured extraction only, runs ~8× faster → fits Vercel's limit)
+// 8B-instant kept as a constant for reference; outline extraction now uses the full model
 const MODEL_FAST = 'llama-3.1-8b-instant';
+void MODEL_FAST; // suppress unused-variable warning
 
 /* ── Shared fetch helper ─────────────────────────────────────────── */
 
@@ -116,78 +117,165 @@ const OUTLINE_SYSTEM =
   'You are an academic assistant that extracts assessment details from university subject outlines. ' +
   'Always respond with valid JSON only. No markdown, no code fences, no text outside the JSON.';
 
+/**
+ * Smart section extractor for KOI (King's Own Institute) subject outlines.
+ *
+ * Problem with naive text.slice(0, 12000):
+ *   • Includes noisy Weekly Planner rows ("Summative graded", "Discussion on Java…")
+ *     every week, which the AI mistakenly treats as assessments.
+ *   • Often misses Section 3 (pages 11–17) which has the actual per-assessment
+ *     details, word limits, and submission instructions.
+ *
+ * This function instead surgically extracts three labelled sections:
+ *   A. Weekly Planner   — Week 1 calendar date + per-week due-date markers
+ *   B. Section 2.8      — formal assessment table (definitive list)
+ *   C. Section 3        — per-assessment details, word limits, submission method
+ *
+ * Character budget (safe for Groq 6 k TPM fallback):
+ *   Planner 4 500 + Table 2 500 + Details 6 000 = 13 000 chars ≈ 3 250 tokens
+ *   + prompt instructions ≈ 750 tokens + max_tokens 2 000 = 6 000 TPM ✓
+ */
+function extractRelevantSections(fullText: string): string {
+  const len = fullText.length;
+
+  /** Return the index of the first regex match, or -1 if none match. */
+  function findSection(patterns: RegExp[]): number {
+    let best = len;
+    for (const pat of patterns) {
+      const m = pat.exec(fullText);
+      if (m && m.index < best) best = m.index;
+    }
+    return best < len ? best : -1;
+  }
+
+  // ── Locate section boundaries ──────────────────────────────────────
+
+  // Section A: Weekly Planner — starts at the table column-header row
+  const plannerIdx = findSection([
+    /week\s*\(\s*beginning\s*\)/i,          // "Week (beginning)  Topics  Readings  Expected Work"
+    /2\.4\s+subject\s+content/i,            // "2.4 Subject Content and Structure"
+    /subject\s+content\s+and\s+structure/i,
+  ]);
+
+  // Section B: Formal Assessment Table (Section 2.8)
+  const tableIdx = findSection([
+    /2\.8\s+student\s+(assessment|assignment)/i,     // "2.8 Student Assessment"
+    /student\s+assignment\s+table/i,
+    /assessment\s*\/\s*assignment\s+type\s+when\s+assessed/i,
+    /assignment\s*\/\s*formative\s+task\s+when\s+assessed/i, // BUS709 header
+  ]);
+
+  // Section C: Per-assessment details (Section 3)
+  const detailsIdx = findSection([
+    /\b3\s+assessment\s+details\b/i,         // "3 Assessment Details"
+    /\b3\s+assignment\s+details\b/i,          // "3 Assignment Details" (BUS709)
+    /\bassessment\s+details\s+and\s+criteria\b/i,
+    /\b3\.1\b.{0,50}(assessment|assignment)\s+\d/i, // "3.1 Assessment 1"
+  ]);
+
+  // ── Slice each section ────────────────────────────────────────────
+
+  const parts: string[] = [];
+
+  if (plannerIdx !== -1) {
+    // Planner ends where the formal table begins (or after 4 500 chars)
+    const end = (tableIdx !== -1 && tableIdx > plannerIdx)
+      ? Math.min(plannerIdx + 4500, tableIdx)
+      : plannerIdx + 4500;
+    parts.push(
+      '=== SECTION A: WEEKLY PLANNER ===\n' +
+      fullText.slice(plannerIdx, end),
+    );
+  }
+
+  if (tableIdx !== -1) {
+    // Table ends where Section 3 begins (or after 2 500 chars)
+    const end = (detailsIdx !== -1 && detailsIdx > tableIdx)
+      ? Math.min(tableIdx + 2500, detailsIdx)
+      : tableIdx + 2500;
+    parts.push(
+      '=== SECTION B: FORMAL ASSESSMENT TABLE (Section 2.8) ===\n' +
+      fullText.slice(tableIdx, end),
+    );
+  }
+
+  if (detailsIdx !== -1) {
+    // Section 3 gets the most space — up to 6 000 chars of detailed descriptions
+    parts.push(
+      '=== SECTION C: ASSESSMENT DETAILS (Section 3) ===\n' +
+      fullText.slice(detailsIdx, detailsIdx + 6000),
+    );
+  }
+
+  if (parts.length === 0) {
+    // Fallback: if no KOI section patterns matched, use a naive slice
+    return fullText.slice(0, 12000);
+  }
+
+  return parts.join('\n\n');
+}
+
 function buildOutlinePrompt(text: string): string {
-  // With Gemini as primary provider (1 M TPM free tier) we can read a much larger
-  // slice — enough to capture the Weekly Planner, assessment table AND Section 3
-  // detailed descriptions in one shot.
-  // Groq fallback (6 k TPM): ~3 000 chars of instructions ≈ 750 tokens
-  //   + 12 000 chars of text ≈ 3 000 tokens + max_tokens 1 500 = 5 250 TPM ✓
-  const textSlice = text.slice(0, 12000);
+  const extracted = extractRelevantSections(text);
 
   return `Extract every formally assessed item from this university subject outline. Today is ${todayStr()}.
 
-━━━ DOCUMENT STRUCTURE (KOI / King's Own Institute format) ━━━
+The text below has been pre-extracted into up to three labelled sections:
 
-The document has THREE sections you must use together:
+  SECTION A — WEEKLY PLANNER: Contains the Week 1 calendar date and, for each week row,
+    an "Expected Work" entry that states when each assessment is due (e.g. "Assessment 2:
+    Quiz due", "Assignment 1 Due Sunday 11:59 pm"). Use this ONLY for dates — ignore all
+    lecture topics, readings, tutorial activities, and "Summative graded" entries.
 
-A) WEEKLY PLANNER (Section 2.4 "Subject Content and Structure")
-   A table with columns: Week (beginning) | Topics | Readings | Expected Work
-   • Each row starts with the week NUMBER and its CALENDAR START DATE,
-     e.g. "Week 5  30 March" or "Week 5 / 30 March".
-   • The "Expected Work" column contains BOLD due-date markers such as:
-       "Assessment 2: Quiz due"
-       "Assignment 1 Due Sunday 11:59 pm"
-       "Assessment 4: Database Privacy and Ethics Report due by Tuesday 9am"
-       "Assessment 2: Demo … conducted in workshop class"
-   ★ USE THESE MARKERS to determine the exact due date for each assessment.
+  SECTION B — FORMAL ASSESSMENT TABLE (Section 2.8): The DEFINITIVE LIST of all assessed
+    items. Each row is one assignment. Use ONLY the rows in this table to decide which
+    assessments exist. Do NOT invent assessments not listed here.
 
-B) FORMAL ASSESSMENT TABLE (Section 2.8 "Student Assessment" or "Student Assignment")
-   Columns: Assessment/Assignment Type | When Assessed | Weighting | Learning Outcomes
-   • This is the DEFINITIVE LIST. Include EVERY row, including formative 0% items.
-   • "When Assessed" gives the week number(s) — cross-reference with the Weekly Planner.
-
-C) ASSESSMENT DETAILS (Section 3 "Assessment Details" or "Assignment Details")
-   • Detailed per-assessment descriptions: word limits, submission method, deliverables.
-   • Use these for the "details" field of each assignment.
-
-━━━ HOW TO CALCULATE EXACT DUE DATES ━━━
-
-Step 1 — Find Week 1 start date from the Weekly Planner row labelled "Week 1".
-Step 2 — Week N start date = Week1Date + (N-1) × 7 days.
-Step 3 — Apply the rule that matches the bold marker in the Weekly Planner:
-
-  "Due Sunday 11:59 pm" in Week N row        → Week N start + 6 days (Sunday)
-  "Sunday midnight Week N"                   → Week N start + 6 days (Sunday)
-  "Due by Tuesday [time] Week N"             → Week N start + 1 day  (Tuesday)
-  "In class Week N" / "In workshop Week N"   → Week N start           (Monday)
-  "Quiz" / "Test" in Week N row              → Week N start           (Monday)
-  Explicit calendar date (e.g. "28 April")   → use that date directly
-  Multi-week range "Weeks M–N"               → Week N start + 4 days  (Friday of last week)
-  No marker found                            → Week N start + 6 days  (Sunday, conservative)
+  SECTION C — ASSESSMENT DETAILS (Section 3): Detailed per-assessment descriptions —
+    word limits, deliverables, submission method. Use these for the "details" field.
 
 ━━━ SUBJECT NAME ━━━
+• Format: "SUBJECTCODE Full Name in Title Case"  e.g. "ICT711 Programming and Algorithms"
+• Strip trimester codes (T126, T226, etc.) from the name.
 
-• Use format: "SUBJECTCODE Full Name in Title Case"
-• Example: "ICT711 Programming and Algorithms"  (NOT "ICT711 PROGRAMMING AND ALGORITHMS T126")
-• Strip the trimester code (T126, T226, etc.) from the name.
+━━━ WHICH ASSESSMENTS TO INCLUDE ━━━
+INCLUDE: Every row in SECTION B — quizzes, reports, projects, presentations, group work,
+formative items (0% weight). Each row = one assignment object in the output.
 
-━━━ WHAT TO INCLUDE vs EXCLUDE ━━━
+EXCLUDE: Anything NOT in Section B — weekly readings, tutorial prep, lecture activities,
+"Summative graded" sessions, "Discussion on…" entries, review questions.
 
-INCLUDE: Every row in the Section 2.8 formal table — quizzes, reports, projects,
-presentations, formative items (0% weight). Each is a separate assignment.
+━━━ CALCULATING EXACT DUE DATES ━━━
 
-EXCLUDE: Weekly tutorial exercises listed in the planner, review questions,
-"Summative graded" session activities, lecture prep, readings.
+Step 1 — In SECTION A, find the row for "Week 1" and read its calendar date
+         (e.g. "Week 1  2 March 2026" → Week 1 starts 2 March 2026).
+Step 2 — Week N start date = Week1StartDate + (N − 1) × 7 days.
+Step 3 — Find this assessment's row in SECTION A "Expected Work" column, then apply:
+
+  Marker in Section A row                              → Due date
+  ─────────────────────────────────────────────────────────────────
+  "Due Sunday 11:59 pm" / "Sunday midnight" (Week N)  → Week N start + 6 days
+  "Due by Tuesday [time]" (Week N)                    → Week N start + 1 day
+  "Due by Monday [time]" / "Monday 9am" (Week N)      → Week N start + 0 days
+  "In class" / "in workshop" / "Quiz" (Week N)        → Week N start + 0 days
+  "Demo … conducted in workshop" (Week N)             → Week N start + 0 days
+  Explicit calendar date anywhere (e.g. "28 April")  → use that date directly
+  "Weeks M–N" range                                   → Week N start + 6 days (Sunday)
+  No marker found                                     → Week N start + 6 days (Sunday)
+
+━━━ DETAILS FIELD ━━━
+Write 2–3 sentences from SECTION C covering: what to submit, word/time limit,
+submission method, key deliverables. If Section C has no entry for an item,
+write a brief description inferred from Section B.
 
 ━━━ OUTPUT FORMAT ━━━
-
 Return ONLY valid JSON — no markdown, no code fences, nothing outside the object:
 {
   "subject": "SUBJECTCODE Full Subject Name",
   "assignments": [
     {
-      "title": "Exact name from Section 2.8 formal table",
-      "details": "2–3 sentences from Section 3: what to submit, word/time limit, submission method, key requirements.",
+      "title": "Exact name from Section B",
+      "details": "2–3 sentences from Section C.",
       "dueDate": "YYYY-MM-DD",
       "difficulty": "easy|medium|hard",
       "estimatedHours": 2,
@@ -196,11 +284,19 @@ Return ONLY valid JSON — no markdown, no code fences, nothing outside the obje
   ]
 }
 
-Difficulty:  easy = formative/quiz/short in-class test | medium = 1 000–2 000w report or presentation | hard = 2 000w+ report, group project with code/implementation, major individual project
-EstimatedHours: 2 = quiz/test | 5 = short report ≤1 500w | 10 = medium 1 500–2 500w or group work | 20 = major project or report ≥2 500w
+Difficulty:
+  easy   = formative quiz, short in-class test, attendance task
+  medium = report/essay 1 000–2 000 w, presentation, group demo
+  hard   = report/project 2 000 w+, major group project with code, individual capstone
 
-Subject outline text:
-${textSlice}`;
+EstimatedHours:
+  2  = quiz or short in-class test
+  5  = short report ≤ 1 500 w or short presentation
+  10 = medium report 1 500–2 500 w, group project, or demo
+  20 = major individual project or report ≥ 2 500 w
+
+Subject outline text (pre-extracted sections):
+${extracted}`;
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */
@@ -209,9 +305,9 @@ export async function extractAssignmentsFromOutline(
   outlineText: string,
 ): Promise<OutlineParseResult> {
   const content = await callAI({
-    model:           MODEL_FAST,  // 8B-instant: ~8× faster, fits within Vercel's 60 s limit
+    model:           MODEL,        // 70B: better date arithmetic and section reasoning
     temperature:     0.1,
-    max_tokens:      1500,        // 5–6 assignments with rich details needs ~800–1200 tokens; 1500 is safe
+    max_tokens:      2000,         // up to 7 assessments with rich details needs ~1 500–1 800 tokens
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: OUTLINE_SYSTEM },

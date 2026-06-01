@@ -3,8 +3,28 @@
 /* Class-based dark mode — applied when <html> has class="dark" */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * Safe-area inset CSS variables — populated by the browser from the device's
+ * reported insets (status bar, gesture handle, 3-button nav row, notch, etc.).
+ * viewport-fit=cover in index.html is required for these to be non-zero.
+ *
+ * Usage:  padding-bottom: var(--sab);
+ *         inline style:   paddingBottom: 'env(safe-area-inset-bottom, 0px)'
+ */
+:root {
+  --sat: env(safe-area-inset-top,    0px);   /* status bar height     */
+  --sab: env(safe-area-inset-bottom, 0px);   /* nav bar / gesture bar */
+  --sal: env(safe-area-inset-left,   0px);   /* landscape left cutout */
+  --sar: env(safe-area-inset-right,  0px);   /* landscape right cutout*/
+}
+
 * {
   box-sizing: border-box;
+}
+
+html, body {
+  /* Prevent rubber-band overscroll on Android/iOS */
+  overscroll-behavior: none;
 }
 
 body {
@@ -14,6 +34,8 @@ body {
   background: #ede8ff;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Remove blue tap-highlight flash on Android WebView */
+  -webkit-tap-highlight-color: transparent;
 }
 
 html.dark body {
@@ -23,7 +45,10 @@ html.dark body {
 #root {
   display: flex;
   justify-content: center;
+  /* dvh fills the full physical screen including the area behind system bars
+     when edge-to-edge is active; svh is a graceful fallback for older engines. */
   min-height: 100svh;
+  min-height: 100dvh;
 }
 
 /* Smooth date picker */

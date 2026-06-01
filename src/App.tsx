@@ -56,16 +56,39 @@ function Shell() {
     <div
       className="w-full max-w-md flex flex-col shadow-2xl shadow-violet-900/20 dark:shadow-black/60 relative"
       style={{
+        /*
+         * min-height: 100dvh fills the full physical screen (including areas
+         * behind transparent system bars) when edge-to-edge is active.
+         * 100svh is the graceful fallback for older engines.
+         */
         minHeight: '100svh',
         background:
           theme === 'dark'
             ? '#0a0a14'
             : 'linear-gradient(160deg, #ede8ff 0%, #f5f2ff 40%, #faf8ff 100%)',
+        /*
+         * paddingTop: pushes ALL screen content below the Android status bar.
+         * env(safe-area-inset-top) is the status-bar height in CSS px.
+         * Returns 0px on desktop so the web layout is unaffected.
+         */
+        paddingTop: 'env(safe-area-inset-top, 0px)',
       }}
     >
       <main
         className="flex-1 overflow-y-auto scrollbar-none"
-        style={{ paddingBottom: showNav ? '76px' : '0' }}
+        style={{
+          /*
+           * When the bottom nav is visible we need to clear:
+           *   76px  — the nav bar's own visual height
+           *   env(safe-area-inset-bottom) — the Android navigation bar / gesture
+           *           handle that sits BELOW the nav bar at the very bottom of the
+           *           screen.  This is what previously overlapped with the app buttons.
+           * When the nav is hidden (detail screens) we still clear the system bar.
+           */
+          paddingBottom: showNav
+            ? 'calc(76px + env(safe-area-inset-bottom, 0px))'
+            : 'env(safe-area-inset-bottom, 0px)',
+        }}
       >
         <Suspense fallback={<ScreenSkeleton />}>
           <Outlet />
@@ -78,7 +101,16 @@ function Shell() {
       {/* ── Bottom nav ─────────────────────────────────── */}
       {showNav && (
         <nav className="fixed bottom-0 w-full max-w-md z-40">
-          <div className="bg-white/88 dark:bg-[#0f0f1e]/95 backdrop-blur-2xl border-t border-violet-200/40 dark:border-violet-900/25 shadow-2xl shadow-violet-900/10 dark:shadow-black/50">
+          {/*
+           * The outer div extends its background colour behind the Android
+           * navigation bar via paddingBottom: env(safe-area-inset-bottom).
+           * The inner row keeps the touchable tab buttons in the visible area
+           * above the system bar with its own pt-2 pb-3 spacing.
+           */}
+          <div
+            className="bg-white/88 dark:bg-[#0f0f1e]/95 backdrop-blur-2xl border-t border-violet-200/40 dark:border-violet-900/25 shadow-2xl shadow-violet-900/10 dark:shadow-black/50"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+          >
             <div className="flex items-end px-1.5 pt-2 pb-3">
               {TABS.map(({ path, label, Icon }) => {
                 const active = location.pathname === path;

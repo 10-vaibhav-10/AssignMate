@@ -13,6 +13,19 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!--
+            Edge-to-edge: allow the WebView to draw behind the status bar and the
+            system navigation bar (3-button row or gesture handle at the bottom).
+
+            windowTranslucentStatus     = status bar is transparent; app draws behind it.
+            windowTranslucentNavigation = nav bar is transparent; app draws behind it.
+
+            The WebView then exposes the correct env(safe-area-inset-*) CSS variables
+            so the React shell can pad its own chrome away from the system UI.
+            This also silences the Android 15+ forced-edge-to-edge overlap issue.
+        -->
+        <item name="android:windowTranslucentStatus">true</item>
+        <item name="android:windowTranslucentNavigation">true</item>
     </style>
 
 

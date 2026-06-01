@@ -195,7 +195,7 @@ export async function extractAssignmentsFromOutline(
   const content = await callAI({
     model:           MODEL_FAST,  // 8B-instant: ~8× faster, fits within Vercel's 60 s limit
     temperature:     0.1,
-    max_tokens:      1500,        // JSON for 3–6 assignments needs ~400–600 tokens; 1 500 is ample
+    max_tokens:      800,         // JSON for 3–6 assignments needs ~400–600 tokens; 800 gives headroom
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: OUTLINE_SYSTEM },

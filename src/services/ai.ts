@@ -117,10 +117,13 @@ const OUTLINE_SYSTEM =
   'Always respond with valid JSON only. No markdown, no code fences, no text outside the JSON.';
 
 function buildOutlinePrompt(text: string): string {
-  // 12 000 chars ≈ 3 000 tokens — enough to cover a full outline including
-  // the assessment table and detailed description pages, while keeping the
-  // prompt small enough for llama-3.1-8b-instant to respond in < 15 s on Vercel.
-  const textSlice = text.slice(0, 12000);
+  // 8 000 chars ≈ 2 000 tokens of outline text.
+  // llama-3.1-8b-instant free tier: 6 000 TPM hard cap.
+  // Groq counts (input tokens + max_tokens) against TPM, so we keep
+  // both sides small:  ~2 000 (text) + ~1 200 (instructions) + 1 500 (max_tokens) ≈ 4 700 TPM.
+  // Assessment tables almost always appear in the first 2–3 pages (~6 000 chars),
+  // so 8 000 chars gives a comfortable read window without blowing the quota.
+  const textSlice = text.slice(0, 8000);
 
   return `Extract only the formally assessed items from this university subject outline. Today is ${todayStr()}.
 
@@ -192,7 +195,7 @@ export async function extractAssignmentsFromOutline(
   const content = await callAI({
     model:           MODEL_FAST,  // 8B-instant: ~8× faster, fits within Vercel's 60 s limit
     temperature:     0.1,
-    max_tokens:      3000,
+    max_tokens:      1500,        // JSON for 3–6 assignments needs ~400–600 tokens; 1 500 is ample
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: OUTLINE_SYSTEM },

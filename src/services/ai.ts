@@ -18,7 +18,11 @@ import { getDaysUntilDue, todayStr } from '../utils';
  */
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 const API_URL  = `${API_BASE}/api/ai`;
-const MODEL    = 'llama-3.3-70b-versatile';
+
+// 70B for per-assignment analysis (complex reasoning, smaller prompt → fast enough)
+const MODEL      = 'llama-3.3-70b-versatile';
+// 8B-instant for outline extraction (structured extraction only, runs ~8× faster → fits Vercel's limit)
+const MODEL_FAST = 'llama-3.1-8b-instant';
 
 /* ── Shared fetch helper ─────────────────────────────────────────── */
 
@@ -31,10 +35,10 @@ type GroqPayload = {
 };
 
 async function callAI(payload: GroqPayload): Promise<string> {
-  // 45-second hard timeout — prevents the UI hanging forever on slow networks
-  // or large documents where Groq takes extra processing time.
+  // 90-second timeout — Vercel functions run up to 60 s; the extra 30 s covers
+  // cold-start overhead and network round-trips between browser → Vercel → Groq.
   const controller = new AbortController();
-  const timeoutId  = setTimeout(() => controller.abort(), 45_000);
+  const timeoutId  = setTimeout(() => controller.abort(), 90_000);
 
   let res: Response;
   try {
@@ -47,7 +51,7 @@ async function callAI(payload: GroqPayload): Promise<string> {
   } catch (err) {
     clearTimeout(timeoutId);
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('AI request timed out (45 s). The document may be too large — try a shorter text, or try again.');
+      throw new Error('AI request timed out. Please try again — it usually works on the second attempt.');
     }
     throw new Error('Could not reach the AI service. Check your internet connection and try again.');
   }
@@ -113,7 +117,10 @@ const OUTLINE_SYSTEM =
   'Always respond with valid JSON only. No markdown, no code fences, no text outside the JSON.';
 
 function buildOutlinePrompt(text: string): string {
-  const textSlice = text.slice(0, 22000);
+  // 12 000 chars ≈ 3 000 tokens — enough to cover a full outline including
+  // the assessment table and detailed description pages, while keeping the
+  // prompt small enough for llama-3.1-8b-instant to respond in < 15 s on Vercel.
+  const textSlice = text.slice(0, 12000);
 
   return `Extract only the formally assessed items from this university subject outline. Today is ${todayStr()}.
 
@@ -183,7 +190,7 @@ export async function extractAssignmentsFromOutline(
   outlineText: string,
 ): Promise<OutlineParseResult> {
   const content = await callAI({
-    model:           MODEL,
+    model:           MODEL_FAST,  // 8B-instant: ~8× faster, fits within Vercel's 60 s limit
     temperature:     0.1,
     max_tokens:      3000,
     response_format: { type: 'json_object' },

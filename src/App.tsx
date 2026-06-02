@@ -4,7 +4,7 @@ import { useAssignmentStore } from './stores/assignmentStore';
 import { useTaskStore } from './stores/taskStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { useStreakStore } from './stores/streakStore';
-import { checkAndNotify } from './services/notifications';
+import { checkAndNotify, setupAndroidNotificationChannel } from './services/notifications';
 import { HomeIcon, ClipboardIcon, CalendarIcon, ChartBarIcon, SettingsIcon } from './components/Icons';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { ToastContainer } from './components/common/Toast';
@@ -178,6 +178,9 @@ export default function App() {
     useTaskStore.getState().load();
     useSettingsStore.getState().load();
     useStreakStore.getState().init();
+
+    // Set up the Android notification channel (idempotent; no-op on web)
+    setupAndroidNotificationChannel().catch(console.error);
 
     const { assignments } = useAssignmentStore.getState();
     const { settings }    = useSettingsStore.getState();

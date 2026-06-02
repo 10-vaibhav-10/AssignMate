@@ -39,4 +39,13 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- POST_NOTIFICATIONS — required on Android 13+ (API 33+) for local notifications.
+         The user will be prompted by the OS when they tap "Enable Notifications". -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- SCHEDULE_EXACT_ALARM — lets LocalNotifications fire at the precise time
+         the user configured.  Required on Android 12+ (API 31+).
+         Falls back to inexact alarm if not granted — still fires, just slightly late. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 </manifest>

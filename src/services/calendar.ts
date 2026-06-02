@@ -5,7 +5,6 @@ function pad(n: number): string {
 }
 
 function toICalDate(dateStr: string): string {
-  // "YYYY-MM-DD" → "YYYYMMDD"
   return dateStr.replace(/-/g, '');
 }
 
@@ -22,35 +21,29 @@ function escapeIcal(str: string): string {
     .replace(/\n/g, '\\n');
 }
 
-/** Download all assignments as a .ics file compatible with Google Calendar / Apple Calendar / Outlook */
-export function downloadICalendar(assignments: Assignment[]): void {
-  const now = toICalDateTimeNow();
-  const events: string[] = [];
-
-  for (const a of assignments) {
-    const dtstart = toICalDate(a.dueDate);
-    const summary = escapeIcal(a.title);
+function buildIcsString(assignments: Assignment[]): string {
+  const now    = toICalDateTimeNow();
+  const events = assignments.map((a) => {
+    const dtstart     = toICalDate(a.dueDate);
+    const summary     = escapeIcal(a.title);
     const description = escapeIcal(
       [a.subject, a.details ? a.details.slice(0, 250) : ''].filter(Boolean).join(' — '),
     );
+    return [
+      'BEGIN:VEVENT',
+      `UID:${a.id}@assignmate`,
+      `DTSTAMP:${now}`,
+      `DTSTART;VALUE=DATE:${dtstart}`,
+      `DTEND;VALUE=DATE:${dtstart}`,
+      `SUMMARY:${summary}`,
+      `DESCRIPTION:${description}`,
+      `CATEGORIES:AssignMate`,
+      'STATUS:CONFIRMED',
+      'END:VEVENT',
+    ].join('\r\n');
+  });
 
-    events.push(
-      [
-        'BEGIN:VEVENT',
-        `UID:${a.id}@assignmate`,
-        `DTSTAMP:${now}`,
-        `DTSTART;VALUE=DATE:${dtstart}`,
-        `DTEND;VALUE=DATE:${dtstart}`,
-        `SUMMARY:${summary}`,
-        `DESCRIPTION:${description}`,
-        `CATEGORIES:AssignMate`,
-        'STATUS:CONFIRMED',
-        'END:VEVENT',
-      ].join('\r\n'),
-    );
-  }
-
-  const calendar = [
+  return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//AssignMate//EN',
@@ -59,12 +52,76 @@ export function downloadICalendar(assignments: Assignment[]): void {
     ...events,
     'END:VCALENDAR',
   ].join('\r\n');
+}
 
-  const blob = new Blob([calendar], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
+/**
+ * Export all assignments as an .ics calendar file.
+ *
+ * On Android / Capacitor: uses the Web Share API which shows the Android
+ *   share sheet — user can open directly in Google Calendar, Samsung Calendar,
+ *   save to Files, etc.  No blob download is needed.
+ *
+ * On desktop browsers: falls back to the classic <a download> trick.
+ */
+export async function downloadICalendar(assignments: Assignment[]): Promise<void> {
+  const ics  = buildIcsString(assignments);
+  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+  const file = new File([blob], 'assignmate.ics', { type: 'text/calendar' });
+
+  // Web Share API with files — works in Android WebView (API 29+) and Chrome mobile.
+  // Capacitor's WebView forwards to the Android share sheet.
+  if (
+    typeof navigator.share === 'function' &&
+    typeof navigator.canShare === 'function' &&
+    navigator.canShare({ files: [file] })
+  ) {
+    await navigator.share({
+      files: [file],
+      title: 'AssignMate Calendar',
+      text:  `${assignments.length} assignment${assignments.length !== 1 ? 's' : ''} exported from AssignMate`,
+    });
+    return;
+  }
+
+  // Fallback: classic anchor-download for desktop browsers
+  const url  = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href = url;
+  link.href     = url;
   link.download = 'assignmate.ics';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Share or download a JSON backup of all app data.
+ *
+ * On Android: triggers the share sheet so the user can save to Drive,
+ *   Files, email it, etc.
+ * On desktop: downloads the file directly.
+ */
+export async function shareOrDownloadJson(json: string, filename: string): Promise<void> {
+  const blob = new Blob([json], { type: 'application/json' });
+  const file = new File([blob], filename, { type: 'application/json' });
+
+  if (
+    typeof navigator.share === 'function' &&
+    typeof navigator.canShare === 'function' &&
+    navigator.canShare({ files: [file] })
+  ) {
+    await navigator.share({
+      files: [file],
+      title: 'AssignMate Backup',
+      text:  'AssignMate data backup',
+    });
+    return;
+  }
+
+  const url  = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href     = url;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

@@ -1,11 +1,16 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useAssignmentStore } from '../stores/assignmentStore';
 import { useTaskStore } from '../stores/taskStore';
 import { storage } from '../services/storage';
 import { toast } from '../stores/toastStore';
-import { downloadICalendar } from '../services/calendar';
-import { requestNotificationPermission, getNotificationPermission, checkAndNotify } from '../services/notifications';
+import { downloadICalendar, shareOrDownloadJson } from '../services/calendar';
+import {
+  requestNotificationPermission,
+  getNotificationPermission,
+  refreshAndroidPermission,
+  checkAndNotify,
+} from '../services/notifications';
 import { Button } from '../components/common/Button';
 import { ConfirmDialog } from '../components/dialogs/ConfirmDialog';
 import { SunIcon, MoonIcon, DownloadIcon } from '../components/Icons';
@@ -25,6 +30,13 @@ export default function Settings() {
 
   const backupFileRef = useRef<HTMLInputElement>(null);
 
+  /* ── Refresh permission state on mount ───────────────────────────
+     On Android, the user can grant/revoke permission in system Settings
+     without us knowing. Read the actual state each time this screen opens. */
+  useEffect(() => {
+    refreshAndroidPermission().then(setPermState).catch(() => {/* non-critical */});
+  }, []);
+
   /* ── Clear all ────────────────────────────────────────────────── */
   function handleClearAll() {
     storage.clearAll();
@@ -42,6 +54,7 @@ export default function Settings() {
     if (perm === 'granted') {
       updateSettings({ notificationsEnabled: true });
       checkAndNotify(assignments, true);
+      if (isAndroid) toast.success('Notifications enabled! You\'ll be reminded at 9 am.');
     }
     setNotifRequesting(false);
   }
@@ -52,28 +65,34 @@ export default function Settings() {
   }
 
   /* ── Calendar export ─────────────────────────────────────────── */
-  function handleExportCalendar() {
+  async function handleExportCalendar() {
     if (assignments.length === 0) {
       toast.warning('No assignments to export.');
       return;
     }
-    downloadICalendar(assignments);
-    toast.success('Calendar file downloaded!');
+    try {
+      await downloadICalendar(assignments);
+      if (!isAndroid) toast.success('Calendar file downloaded!');
+    } catch (err) {
+      // User cancelled the share sheet — not an error
+      if (err instanceof Error && err.name !== 'AbortError') {
+        toast.error('Could not export calendar.');
+      }
+    }
   }
 
   /* ── JSON backup ─────────────────────────────────────────────── */
-  function handleExportBackup() {
-    const json = storage.exportAll();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `assignmate-backup-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast.success('Backup downloaded!');
+  async function handleExportBackup() {
+    const json     = storage.exportAll();
+    const filename = `assignmate-backup-${new Date().toISOString().split('T')[0]}.json`;
+    try {
+      await shareOrDownloadJson(json, filename);
+      if (!isAndroid) toast.success('Backup downloaded!');
+    } catch (err) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        toast.error('Could not export backup.');
+      }
+    }
   }
 
   async function handleImportBackup(e: React.ChangeEvent<HTMLInputElement>) {
@@ -370,7 +389,7 @@ export default function Settings() {
             <InfoRow label="App"      value="AssignMate" />
             <InfoRow label="Version"  value="2.2.0" />
             <InfoRow label="AI"       value="Groq · Llama 3.3 70B (server-side)" />
-            <InfoRow label="Storage"  value="Browser LocalStorage" />
+            <InfoRow label="Storage"  value={isAndroid ? 'Device (LocalStorage)' : 'Browser LocalStorage'} />
           </div>
         </SettingsSection>
       </div>

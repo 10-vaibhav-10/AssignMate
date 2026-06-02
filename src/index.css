@@ -25,6 +25,14 @@
 html, body {
   /* Prevent rubber-band overscroll on Android/iOS */
   overscroll-behavior: none;
+  /*
+   * Lock font size at 100% — Android respects the system "Font size" setting
+   * which can inflate or shrink all text and break layouts.
+   * text-size-adjust: none would prevent ALL scaling; 100% keeps accessibility
+   * scaling off but still allows the user to manually zoom.
+   */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -36,6 +44,25 @@ body {
   -moz-osx-font-smoothing: grayscale;
   /* Remove blue tap-highlight flash on Android WebView */
   -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * Prevent accidental text-selection on interactive elements (buttons, nav,
+ * cards) — long-pressing should not trigger the OS selection handles.
+ * Text content (paragraphs, headings) retains default selection behaviour.
+ */
+button, a, nav, label {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/*
+ * Android WebView auto-zooms into any input whose font-size < 16px.
+ * Setting a minimum of 16px on all inputs prevents that jarring zoom,
+ * while still rendering at the correct visual size via transform on parent.
+ */
+input, textarea, select {
+  font-size: max(16px, 1em);
 }
 
 html.dark body {

@@ -26,6 +26,13 @@
         -->
         <item name="android:windowTranslucentStatus">true</item>
         <item name="android:windowTranslucentNavigation">true</item>
+        <!--
+            Status bar icon colour: false = white/light icons (ideal for our
+            purple/violet gradient header that sits under the transparent status
+            bar).  If your app ever shows a fully white header at the top you
+            would flip this to true for dark icons instead.
+        -->
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
 

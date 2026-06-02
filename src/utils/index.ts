@@ -1,6 +1,12 @@
 import { format, formatDistanceToNow, isPast, parseISO, addDays, isSameDay } from 'date-fns';
 import type { Assignment, Task } from '../types';
 
+/**
+ * True when the bundle was compiled with --mode android (i.e. the APK build).
+ * Use this to swap browser-specific copy for device-appropriate copy.
+ */
+export const isAndroid = import.meta.env.MODE === 'android';
+
 export function formatDueDate(dateStr: string): string {
   return format(parseISO(dateStr), 'MMM d, yyyy');
 }

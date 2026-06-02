@@ -9,6 +9,7 @@ import { requestNotificationPermission, getNotificationPermission, checkAndNotif
 import { Button } from '../components/common/Button';
 import { ConfirmDialog } from '../components/dialogs/ConfirmDialog';
 import { SunIcon, MoonIcon, DownloadIcon } from '../components/Icons';
+import { isAndroid } from '../utils';
 
 export default function Settings() {
   const settings        = useSettingsStore((s) => s.settings);
@@ -230,14 +231,18 @@ export default function Settings() {
         {/* ── Notifications ──────────────────────────────────── */}
         <SettingsSection icon="🔔" iconBg="bg-violet-100 dark:bg-violet-900/30" title="Notifications">
           {!('Notification' in window) ? (
-            <p className="text-sm text-gray-500 dark:text-gray-400">Not supported in this browser.</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {isAndroid ? 'Notifications are not available in this version.' : 'Not supported in this browser.'}
+            </p>
           ) : permState === 'denied' ? (
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-                Notifications are blocked. Allow them in your browser's site settings.
+                {isAndroid
+                  ? 'Notifications are blocked. Enable them in Android Settings → Apps → AssignMate → Notifications.'
+                  : "Notifications are blocked. Allow them in your browser's site settings."}
               </p>
               <span className="inline-block text-xs bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 px-2.5 py-1 rounded-full font-bold">
-                ⚡ Blocked by browser
+                {isAndroid ? '⚡ Blocked in app settings' : '⚡ Blocked by browser'}
               </span>
             </div>
           ) : permState === 'default' ? (
@@ -306,7 +311,7 @@ export default function Settings() {
         {/* ── Data Management ────────────────────────────────── */}
         <SettingsSection icon="🗃️" iconBg="bg-red-100 dark:bg-red-900/30" title="Data Management">
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-            All data is stored locally in your browser.
+            {isAndroid ? 'All data is stored locally on your device.' : 'All data is stored locally in your browser.'}
           </p>
 
           {/* Calendar export */}

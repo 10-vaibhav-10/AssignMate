@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAssignmentStore } from '../stores/assignmentStore';
 import { useTaskStore } from '../stores/taskStore';
@@ -333,6 +333,9 @@ export default function Stats() {
           </div>
         )}
 
+        {/* ── Grade Goal Calculator ─────────────────────────── */}
+        <GradeCalculator assignments={assignments} />
+
         {/* Empty state */}
         {assignments.length === 0 && (
           <div className="flex flex-col items-center py-16 text-center">
@@ -550,6 +553,183 @@ function PressureMeter({ assignments }: { assignments: Assignment[] }) {
             No active assignments — enjoy the break! 🎉
           </p>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Grade Goal Calculator
+ *
+ * Answers: "What average do I need on my remaining assignments to hit
+ * my target grade for this subject?"
+ *
+ * Formula (weighted average):
+ *   earnedScore    = Σ (weight% × grade / 100)  for graded assignments
+ *   completedWeight = Σ weight%  for graded assignments
+ *   remainingWeight = 100 − completedWeight
+ *   neededAvg      = (target − earnedScore) / remainingWeight × 100
+ *
+ * Only shows for subjects that have at least one weighted assignment.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+function parseWeight(w: string | undefined): number {
+  if (!w) return 0;
+  const n = parseFloat(w.replace('%', ''));
+  return isNaN(n) ? 0 : n;
+}
+
+const GRADE_TARGETS = [
+  { label: 'High Distinction', short: 'HD', value: 85 },
+  { label: 'Distinction',      short: 'D',  value: 75 },
+  { label: 'Credit',           short: 'C',  value: 65 },
+  { label: 'Pass',             short: 'P',  value: 50 },
+];
+
+function GradeCalculator({ assignments }: { assignments: Assignment[] }) {
+  const [targetIdx, setTargetIdx] = useState(0);
+
+  /* Group by subject — only subjects with ≥1 weighted assignment */
+  const subjectData = useMemo(() => {
+    const map: Record<string, Assignment[]> = {};
+    for (const a of assignments) {
+      if (parseWeight(a.weight) > 0) {
+        if (!map[a.subject]) map[a.subject] = [];
+        map[a.subject].push(a);
+      }
+    }
+    return Object.entries(map).map(([subject, items]) => {
+      const graded   = items.filter((a) => a.grade !== undefined);
+      const ungraded = items.filter((a) => a.grade === undefined);
+
+      const earnedScore      = graded.reduce((s, a) => s + parseWeight(a.weight) * (a.grade! / 100), 0);
+      const completedWeight  = graded.reduce((s, a) => s + parseWeight(a.weight), 0);
+      const remainingWeight  = items.reduce((s, a) => s + parseWeight(a.weight), 0) - completedWeight;
+      const currentAvg       = completedWeight > 0 ? (earnedScore / completedWeight) * 100 : null;
+
+      return { subject, items, graded, ungraded, earnedScore, completedWeight, remainingWeight, currentAvg };
+    }).filter((d) => d.items.length > 0);
+  }, [assignments]);
+
+  if (subjectData.length === 0) return null;
+
+  const target = GRADE_TARGETS[targetIdx].value;
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm shadow-indigo-100/40 dark:shadow-gray-900/30 overflow-hidden">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🎯</span>
+          <span className="text-white font-bold text-sm">Grade Goal Calculator</span>
+        </div>
+        <span className="text-white/80 text-xs font-medium">weighted avg</span>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Target selector */}
+        <div>
+          <p className="text-[10px] font-bold tracking-widest text-gray-400 dark:text-gray-500 mb-2">TARGET GRADE</p>
+          <div className="flex gap-2">
+            {GRADE_TARGETS.map(({ short, value }, i) => (
+              <button
+                key={short}
+                onClick={() => setTargetIdx(i)}
+                className={`flex-1 py-2 rounded-xl text-sm font-black transition-all ${
+                  i === targetIdx
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md shadow-violet-300/30'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                }`}
+              >
+                {short}
+                <span className="block text-[9px] font-bold opacity-70">{value}%</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Per-subject results */}
+        <div className="space-y-4">
+          {subjectData.map(({ subject, items, ungraded, earnedScore, completedWeight, remainingWeight, currentAvg }) => {
+            const needed = remainingWeight > 0
+              ? ((target - earnedScore) / remainingWeight) * 100
+              : null;
+
+            const statusColor =
+              needed === null    ? 'text-teal-600 dark:text-teal-400'  :
+              needed > 100       ? 'text-red-500 dark:text-red-400'    :
+              needed < 0         ? 'text-emerald-600 dark:text-emerald-400' :
+              needed > 80        ? 'text-orange-500 dark:text-orange-400' :
+                                   'text-teal-600 dark:text-teal-400';
+
+            const statusMsg =
+              needed === null && completedWeight >= 95 ?
+                (earnedScore / completedWeight * 100) >= target
+                  ? `🎉 You've achieved ${GRADE_TARGETS[targetIdx].short}!`
+                  : `⚠️ Below ${GRADE_TARGETS[targetIdx].short} — contact your lecturer`
+              : needed === null ? 'No ungraded work remaining'
+              : needed > 100    ? `Mathematically difficult — need ${needed.toFixed(0)}%`
+              : needed <= 0     ? `🎉 Already secured ${GRADE_TARGETS[targetIdx].short}!`
+              :                   `Need avg ${needed.toFixed(1)}% on remaining work`;
+
+            return (
+              <div key={subject} className="rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
+                {/* Subject header */}
+                <div className="bg-gray-50 dark:bg-gray-900/40 px-3 py-2 flex items-center justify-between">
+                  <span className="text-xs font-bold text-gray-700 dark:text-gray-300 truncate flex-1">
+                    {subject}
+                  </span>
+                  {currentAvg !== null && (
+                    <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 ml-2 shrink-0">
+                      {currentAvg.toFixed(1)}% so far
+                    </span>
+                  )}
+                </div>
+
+                {/* Assignment rows */}
+                <div className="divide-y divide-gray-50 dark:divide-gray-700/50">
+                  {items.map((a) => (
+                    <div key={a.id} className="flex items-center gap-2 px-3 py-2">
+                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        a.grade !== undefined ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'
+                      }`} />
+                      <span className="text-xs text-gray-700 dark:text-gray-300 flex-1 truncate">
+                        {a.title}
+                      </span>
+                      <span className="text-[10px] text-gray-400 shrink-0 font-semibold">
+                        {parseWeight(a.weight)}%
+                      </span>
+                      <span className={`text-xs font-black shrink-0 w-12 text-right ${
+                        a.grade !== undefined
+                          ? a.grade >= 85 ? 'text-emerald-600 dark:text-emerald-400'
+                          : a.grade >= 65 ? 'text-teal-600 dark:text-teal-400'
+                          : a.grade >= 50 ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-red-500 dark:text-red-400'
+                          : 'text-gray-300 dark:text-gray-600'
+                      }`}>
+                        {a.grade !== undefined ? `${a.grade}%` : '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Result */}
+                <div className="px-3 py-2.5 bg-gray-50/80 dark:bg-gray-900/30 border-t border-gray-100 dark:border-gray-700">
+                  <p className={`text-xs font-bold ${statusColor}`}>{statusMsg}</p>
+                  {ungraded.length > 0 && remainingWeight > 0 && (
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                      {ungraded.length} ungraded item{ungraded.length !== 1 ? 's' : ''} · {remainingWeight.toFixed(0)}% of grade remaining
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <p className="text-[10px] text-gray-400 dark:text-gray-500 text-center">
+          Enter grades via Edit Assignment to see your projected result.
+        </p>
       </div>
     </div>
   );

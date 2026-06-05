@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAssignmentStore } from '../stores/assignmentStore';
 import { toast } from '../stores/toastStore';
+import { rescheduleAll } from '../services/notifications';
 import { Button } from '../components/common/Button';
 import { ChevronLeftIcon } from '../components/Icons';
 import { DIFFICULTY_OPTIONS, DIFFICULTY_LABELS, ESTIMATED_HOURS_OPTIONS } from '../constants';
@@ -121,6 +122,9 @@ export default function AssignmentForm() {
       });
       toast.success('Assignment created!');
     }
+    // Reschedule notifications so the new/changed due date is reflected immediately
+    const latest = useAssignmentStore.getState().assignments;
+    rescheduleAll(latest);
     navigate(-1);
   }
 

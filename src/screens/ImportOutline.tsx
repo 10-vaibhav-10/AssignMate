@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAssignmentStore } from '../stores/assignmentStore';
+// Note: useAssignmentStore.getState() is used after addAssignment calls
 import { extractFromPdf, extractFromImage } from '../services/fileExtractor';
 import { extractAssignmentsFromOutline } from '../services/ai';
 import { formatDueDate } from '../utils';
+import { rescheduleAll } from '../services/notifications';
 import { DifficultyBadge } from '../components/common/Badge';
 import { Button } from '../components/common/Button';
 import { ChevronLeftIcon, DocumentArrowUpIcon, SparklesIcon, CheckIcon } from '../components/Icons';
@@ -128,6 +130,9 @@ export default function ImportOutline() {
         weight:         a.weight || undefined,   // persist "25%" weighting
       });
     }
+    // Reschedule notifications to include all the newly imported assignments
+    const latest = useAssignmentStore.getState().assignments;
+    rescheduleAll(latest);
     navigate('/assignments');
   }
 

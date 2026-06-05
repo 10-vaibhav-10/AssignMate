@@ -5,6 +5,7 @@ import { useTaskStore } from '../stores/taskStore';
 import { analyzeAssignment } from '../services/ai';
 import { toast } from '../stores/toastStore';
 import { formatDueDate, isOverdue, getDaysUntilDue, offsetDate } from '../utils';
+import { cancelNotificationsForAssignment, rescheduleAll } from '../services/notifications';
 import { DifficultyBadge } from '../components/common/Badge';
 import { Button } from '../components/common/Button';
 import { ConfirmDialog } from '../components/dialogs/ConfirmDialog';
@@ -101,6 +102,8 @@ export default function AssignmentDetail() {
       setAiStatus('success');
       const verb = snap.aiExplanation ? 'updated' : 'complete';
       toast.success(`AI analysis ${verb}! ✨`);
+      // Reschedule so new task dates are reflected in notifications
+      rescheduleAll(useAssignmentStore.getState().assignments);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Analysis failed. Please try again.';
       setAiError(msg);
@@ -123,9 +126,10 @@ export default function AssignmentDetail() {
         : 0;
     updateAssignment(assignment.id, { progress });
 
-    /* Toast when all tasks done */
+    /* When all tasks are done, mark 100% and cancel any pending reminders */
     if (completed === updatedTasks.length && updatedTasks.length > 0) {
       toast.success('All tasks complete — assignment done! 🎉');
+      cancelNotificationsForAssignment(assignment.id).catch(console.error);
     }
   }
 
@@ -148,8 +152,13 @@ export default function AssignmentDetail() {
   /* ── Delete ────────────────────────────────────────────────────── */
   function handleDelete() {
     if (!assignment) return;
+    // Cancel pending notifications for this assignment before removing data
+    cancelNotificationsForAssignment(assignment.id).catch(console.error);
     removeAssignment(assignment.id);
     removeByAssignment(assignment.id);
+    // Reschedule remaining assignments (removes cancelled ones from the queue)
+    const remaining = useAssignmentStore.getState().assignments;
+    rescheduleAll(remaining);
     toast.success('Assignment deleted.');
     navigate('/assignments');
   }

@@ -9,6 +9,7 @@ import {
   requestNotificationPermission,
   getNotificationPermission,
   refreshAndroidPermission,
+  canScheduleExactAlarms,
   checkAndNotify,
 } from '../services/notifications';
 import { Button } from '../components/common/Button';
@@ -24,17 +25,20 @@ export default function Settings() {
   const loadAssignments = useAssignmentStore((s) => s.load);
   const loadTasks       = useTaskStore((s) => s.load);
 
-  const [showClearDialog, setShowClearDialog] = useState(false);
-  const [permState,       setPermState]       = useState<NotificationPermission>(getNotificationPermission());
-  const [notifRequesting, setNotifRequesting] = useState(false);
+  const [showClearDialog,  setShowClearDialog]  = useState(false);
+  const [permState,        setPermState]        = useState<NotificationPermission>(getNotificationPermission());
+  const [notifRequesting,  setNotifRequesting]  = useState(false);
+  const [exactAlarmOk,     setExactAlarmOk]     = useState(true);
 
   const backupFileRef = useRef<HTMLInputElement>(null);
 
-  /* ── Refresh permission state on mount ───────────────────────────
-     On Android, the user can grant/revoke permission in system Settings
-     without us knowing. Read the actual state each time this screen opens. */
+  /* ── Refresh permission state on mount ──────────────────────────
+     On Android, the user can grant/revoke notification permission or the
+     "Alarms & Reminders" special-access in system Settings at any time.
+     Re-read actual state each time this screen opens. */
   useEffect(() => {
-    refreshAndroidPermission().then(setPermState).catch(() => {/* non-critical */});
+    refreshAndroidPermission().then(setPermState).catch(() => {});
+    canScheduleExactAlarms().then(setExactAlarmOk).catch(() => {});
   }, []);
 
   /* ── Clear all ────────────────────────────────────────────────── */
@@ -301,7 +305,21 @@ export default function Settings() {
                   />
                 </button>
               </div>
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">Fires once per day per assignment.</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
+                Fires at 9 am — 3 days before, 1 day before, day of, and day after due.
+              </p>
+              {/* Android 12 exact-alarm warning */}
+              {isAndroid && !exactAlarmOk && (
+                <div className="mt-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl p-3">
+                  <p className="text-xs font-bold text-amber-700 dark:text-amber-400 mb-1">
+                    ⚠️ Exact alarms not enabled
+                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-500 leading-relaxed">
+                    Go to <strong>Settings → Apps → AssignMate → Alarms &amp; Reminders</strong> and
+                    turn it on so notifications fire at the exact scheduled time.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </SettingsSection>

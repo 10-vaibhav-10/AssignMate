@@ -211,11 +211,60 @@ function fireWebNotifications(assignments: Assignment[]): void {
   if (changed) saveNotified(notified);
 }
 
+/* ── Android: cancel notifications for a single assignment ──────────────── */
+
+/**
+ * Cancel all pending notifications for one assignment.
+ * Call this when an assignment is completed (progress === 100) or deleted.
+ * Safe to call even if no notifications exist for that assignment.
+ */
+export async function cancelNotificationsForAssignment(assignmentId: string): Promise<void> {
+  if (!isAndroid) return;
+  const { LocalNotifications } = await import('@capacitor/local-notifications');
+  const { notifications: pending } = await LocalNotifications.getPending();
+
+  // Find IDs that belong to this assignment by re-computing the stable IDs
+  const offsets = [-3, -1, 0, 1];
+  const ids = offsets.map((o) => ({ id: stableId(`${assignmentId}:${o}`) }));
+  const toCancel = ids.filter((n) => pending.some((p) => p.id === n.id));
+  if (toCancel.length) {
+    await LocalNotifications.cancel({ notifications: toCancel });
+  }
+}
+
+/* ── Android: check whether exact alarms are permitted ──────────────────── */
+
+/**
+ * Returns true if the app can schedule exact alarms.
+ * On Android 12 (API 31–32) the user must grant "Alarms & Reminders"
+ * in Special App Access — this check lets us warn them if they haven't.
+ * On Android 13+ (USE_EXACT_ALARM) this always returns true.
+ */
+export async function canScheduleExactAlarms(): Promise<boolean> {
+  if (!isAndroid) return true;
+  try {
+    const { LocalNotifications } = await import('@capacitor/local-notifications');
+    // checkExactNotificationSchedulePermission was added in @capacitor/local-notifications 5.x
+    if (typeof (LocalNotifications as unknown as { checkExactNotificationSchedulePermission?: () => Promise<{exact: string}> }).checkExactNotificationSchedulePermission === 'function') {
+      const { exact } = await (LocalNotifications as unknown as { checkExactNotificationSchedulePermission: () => Promise<{exact: string}> }).checkExactNotificationSchedulePermission();
+      return exact === 'granted';
+    }
+  } catch { /* not supported on this Capacitor version */ }
+  return true; // assume ok if API unavailable
+}
+
 /* ── Public entry point ──────────────────────────────────────────────────── */
 
 /**
  * Fire (web) or schedule (Android) notifications for all active assignments.
- * Called on app launch and whenever assignments or settings change.
+ *
+ * Call this:
+ *   • On app launch                          → already done in App.tsx
+ *   • When notifications are enabled/toggled → already done in Settings.tsx
+ *   • After adding / editing an assignment   → AssignmentForm.tsx
+ *   • After bulk-importing assignments       → ImportOutline.tsx
+ *   • After deleting an assignment           → AssignmentDetail.tsx (via cancelNotificationsForAssignment)
+ *   • When an assignment reaches 100%        → AssignmentDetail.tsx (via cancelNotificationsForAssignment)
  */
 export function checkAndNotify(assignments: Assignment[], enabled: boolean): void {
   if (!enabled) return;
@@ -225,4 +274,17 @@ export function checkAndNotify(assignments: Assignment[], enabled: boolean): voi
   } else {
     fireWebNotifications(assignments);
   }
+}
+
+/**
+ * Convenience wrapper: read current settings and reschedule everything.
+ * Use this in screens that mutate assignments but don't have settings in scope.
+ */
+export function rescheduleAll(assignments: Assignment[]): void {
+  try {
+    // Dynamically read the latest settings without importing the store at module level
+    const raw = localStorage.getItem('am_settings');
+    const settings = raw ? (JSON.parse(raw) as { notificationsEnabled?: boolean }) : {};
+    checkAndNotify(assignments, settings.notificationsEnabled ?? false);
+  } catch { /* non-critical */ }
 }

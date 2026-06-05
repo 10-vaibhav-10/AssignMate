@@ -36,16 +36,36 @@
         </provider>
     </application>
 
-    <!-- Permissions -->
+    <!-- ─── Permissions ───────────────────────────────────────────────────── -->
 
+    <!-- Network (AI calls, calendar sync) -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- POST_NOTIFICATIONS — required on Android 13+ (API 33+) for local notifications.
-         The user will be prompted by the OS when they tap "Enable Notifications". -->
+    <!-- Notifications (Android 13+ / API 33+)
+         The OS shows a system dialog when the user taps "Enable Notifications". -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- SCHEDULE_EXACT_ALARM — lets LocalNotifications fire at the precise time
-         the user configured.  Required on Android 12+ (API 31+).
-         Falls back to inexact alarm if not granted — still fires, just slightly late. -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Vibration for notification alerts -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Exact alarms — two declarations cover all Android versions:
+
+         USE_EXACT_ALARM (API 33+, Android 13+):
+           Automatically granted to apps that provide genuine reminder / calendar
+           functionality — no special-access dialog needed.  Preferred path.
+
+         SCHEDULE_EXACT_ALARM (API 31–32, Android 12):
+           Requires the user to grant "Alarms & Reminders" in Special App Access.
+           Restricted to API ≤ 32 so Android 13+ devices use USE_EXACT_ALARM instead. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
+
+    <!-- Wake device to deliver notification at exact time
+         (declared by the plugin manifest but listed here for clarity) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Re-schedule alarms after reboot
+         (declared by the plugin manifest but listed here for clarity) -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 </manifest>

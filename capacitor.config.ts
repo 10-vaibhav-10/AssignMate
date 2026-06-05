@@ -25,6 +25,14 @@ const config: CapacitorConfig = {
       showSpinner:          false,
       androidSpinnerStyle:  'small',
     },
+
+    // Local notification defaults — channel is created at runtime in notifications.ts
+    // but these values act as fallbacks for the plugin's internal defaults.
+    LocalNotifications: {
+      smallIcon:   'ic_stat_notification', // monochrome white-on-transparent vector
+      iconColor:   '#7c3aed',              // violet — applied as accent colour on API 26+
+      sound:       'default',
+    },
   },
 };
 

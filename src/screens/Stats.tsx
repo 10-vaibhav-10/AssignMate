@@ -3,8 +3,63 @@ import { useNavigate } from 'react-router-dom';
 import { useAssignmentStore } from '../stores/assignmentStore';
 import { useTaskStore } from '../stores/taskStore';
 import { useStreakStore } from '../stores/streakStore';
-import { isOverdue } from '../utils';
+import { isOverdue, getDaysUntilDue } from '../utils';
 import { FlameIcon, ClockIcon, ChartBarIcon } from '../components/Icons';
+import type { Assignment } from '../types';
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Pressure Meter — pure calculation helpers
+ *
+ * "Pressure score" (0–100) = sum of urgency × remaining work × difficulty
+ * for all active assignments within the next 14 days (or already overdue).
+ * ───────────────────────────────────────────────────────────────────────── */
+
+function urgencyWeight(daysUntilDue: number): number {
+  if (daysUntilDue < 0)        return 25;   // overdue — maximum
+  if (daysUntilDue === 0)      return 20;   // due today
+  if (daysUntilDue <= 2)       return 14;
+  if (daysUntilDue <= 5)       return 8;
+  if (daysUntilDue <= 10)      return 4;
+  if (daysUntilDue <= 14)      return 2;
+  return 0;                                  // > 14 days away — no pressure yet
+}
+
+function calcPressureScore(assignments: Assignment[]): number {
+  let score = 0;
+  for (const a of assignments) {
+    if (a.progress >= 100) continue;
+    const days = getDaysUntilDue(a.dueDate);
+    const rem  = (100 - a.progress) / 100;
+    const diff = a.difficulty === 'hard' ? 1.5 : a.difficulty === 'medium' ? 1.0 : 0.6;
+    score += urgencyWeight(days) * rem * diff;
+  }
+  return Math.min(100, Math.round(score));
+}
+
+/** Calculate pressure score for each of the next N days (forecast sparkline). */
+function getPressureForecast(assignments: Assignment[], days = 14): number[] {
+  return Array.from({ length: days }, (_, offset) => {
+    let score = 0;
+    for (const a of assignments) {
+      if (a.progress >= 100) continue;
+      const futureDays = getDaysUntilDue(a.dueDate) - offset;
+      const rem  = (100 - a.progress) / 100;
+      const diff = a.difficulty === 'hard' ? 1.5 : a.difficulty === 'medium' ? 1.0 : 0.6;
+      score += urgencyWeight(futureDays) * rem * diff;
+    }
+    return Math.min(100, Math.round(score));
+  });
+}
+
+type PressureLevel = { label: string; emoji: string; textCls: string; gradient: string };
+
+function getPressureLevel(score: number): PressureLevel {
+  if (score >= 80) return { label: 'Critical',     emoji: '💥', textCls: 'text-red-600 dark:text-red-400',     gradient: 'from-red-500 to-rose-600'     };
+  if (score >= 60) return { label: 'High Load',    emoji: '🔥', textCls: 'text-orange-600 dark:text-orange-400', gradient: 'from-orange-500 to-red-500' };
+  if (score >= 40) return { label: 'Getting Busy', emoji: '⚡', textCls: 'text-amber-600 dark:text-amber-400',   gradient: 'from-amber-400 to-orange-500' };
+  if (score >= 20) return { label: 'Manageable',   emoji: '📚', textCls: 'text-teal-600 dark:text-teal-400',    gradient: 'from-teal-400 to-cyan-500'   };
+  return           { label: 'All Clear',    emoji: '😌', textCls: 'text-emerald-600 dark:text-emerald-400', gradient: 'from-emerald-400 to-teal-500' };
+}
 
 export default function Stats() {
   const navigate = useNavigate();
@@ -89,6 +144,9 @@ export default function Stats() {
       </div>
 
       <div className="px-4 space-y-4 mt-4">
+        {/* ── Pressure Meter ───────────────────────────────── */}
+        <PressureMeter assignments={assignments} />
+
         {/* ── Streak card ──────────────────────────────────── */}
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm shadow-indigo-100/40 dark:shadow-gray-900/30 overflow-hidden">
           <div className="bg-gradient-to-r from-orange-500 to-rose-500 px-4 py-3 flex items-center justify-between">
@@ -307,6 +365,191 @@ function StatCard({
       <div>
         <div className={`text-2xl font-extrabold ${color}`}>{value}</div>
         <div className="text-[10px] text-gray-400 dark:text-gray-500 font-bold tracking-wide">{label.toUpperCase()}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Pressure Meter component
+ * ───────────────────────────────────────────────────────────────────────── */
+function PressureMeter({ assignments }: { assignments: Assignment[] }) {
+  const score    = calcPressureScore(assignments);
+  const forecast = getPressureForecast(assignments);
+  const level    = getPressureLevel(score);
+
+  /* Top 3 assignments contributing most to pressure right now */
+  const drivers = useMemo(() => {
+    return assignments
+      .filter((a) => a.progress < 100 && getDaysUntilDue(a.dueDate) <= 14)
+      .map((a) => ({ a, pts: calcPressureScore([a]) }))
+      .sort((x, y) => y.pts - x.pts)
+      .slice(0, 3);
+  }, [assignments]);
+
+  /* Build SVG sparkline path */
+  const SVG_W = 300;
+  const SVG_H = 48;
+  const maxF  = Math.max(...forecast, 1);
+
+  const pts = forecast.map((v, i) => {
+    const x = (i / (forecast.length - 1)) * SVG_W;
+    const y = SVG_H - 4 - ((v / maxF) * (SVG_H - 10));
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  const linePath = `M ${pts.join(' L ')}`;
+  const areaPath = `M 0,${SVG_H} L ${pts.join(' L ')} L ${SVG_W},${SVG_H} Z`;
+
+  /* Threshold line for "critical" zone (80/100) */
+  const critY = SVG_H - 4 - ((80 / maxF) * (SVG_H - 10));
+  const showCritLine = maxF >= 50;
+
+  const hasActiveWork = assignments.some((a) => a.progress < 100);
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm shadow-indigo-100/40 dark:shadow-gray-900/30 overflow-hidden">
+
+      {/* Card header */}
+      <div className={`bg-gradient-to-r ${level.gradient} px-4 py-3 flex items-center justify-between`}>
+        <div className="flex items-center gap-2">
+          <span className="text-lg leading-none">{level.emoji}</span>
+          <span className="text-white font-bold text-sm">Academic Pressure</span>
+        </div>
+        <span className="text-white/90 text-sm font-black bg-white/20 px-2.5 py-0.5 rounded-full">
+          {score}/100
+        </span>
+      </div>
+
+      <div className="p-4 space-y-4">
+
+        {/* Score + gauge */}
+        <div className="flex items-center gap-4">
+          <div className="text-center shrink-0 w-16">
+            <div className="text-4xl font-black text-gray-900 dark:text-white leading-none">{score}</div>
+            <div className={`text-[10px] font-bold mt-1 ${level.textCls}`}>{level.label}</div>
+          </div>
+
+          <div className="flex-1">
+            {/* Gauge bar */}
+            <div className="relative h-5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full bg-gradient-to-r ${level.gradient} transition-all duration-700`}
+                style={{ width: `${score}%` }}
+              />
+            </div>
+            {/* Emoji scale */}
+            <div className="flex justify-between mt-1.5 px-0.5">
+              {['😌', '📚', '⚡', '🔥', '💥'].map((e) => (
+                <span key={e} className="text-xs opacity-60 select-none">{e}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 14-day forecast sparkline */}
+        <div>
+          <p className="text-[10px] font-bold tracking-widest text-gray-400 dark:text-gray-500 mb-2">
+            14-DAY FORECAST
+          </p>
+          <div className="relative bg-gray-50 dark:bg-gray-900/40 rounded-xl px-2 pt-2 pb-1 overflow-hidden">
+            <svg
+              viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+              className="w-full"
+              preserveAspectRatio="none"
+              style={{ height: 52 }}
+            >
+              <defs>
+                <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#6366f1" stopOpacity="0.30" />
+                  <stop offset="100%" stopColor="#6366f1" stopOpacity="0.02" />
+                </linearGradient>
+              </defs>
+
+              {/* Area fill under the line */}
+              <path d={areaPath} fill="url(#sparkFill)" />
+
+              {/* Critical zone dashed threshold */}
+              {showCritLine && (
+                <line
+                  x1="0" y1={critY} x2={SVG_W} y2={critY}
+                  stroke="#ef4444" strokeWidth="1.5"
+                  strokeDasharray="5 4" opacity="0.45"
+                />
+              )}
+
+              {/* Line */}
+              <path
+                d={linePath} fill="none"
+                stroke="#6366f1" strokeWidth="2.5"
+                strokeLinecap="round" strokeLinejoin="round"
+              />
+
+              {/* Today dot */}
+              {pts[0] && (
+                <circle
+                  cx={pts[0].split(',')[0]} cy={pts[0].split(',')[1]}
+                  r="4" fill="#6366f1"
+                />
+              )}
+            </svg>
+
+            {/* Day axis labels */}
+            <div className="flex justify-between mt-0.5 pb-0.5">
+              <span className="text-[9px] text-gray-400 font-semibold">Today</span>
+              <span className="text-[9px] text-gray-400">+7d</span>
+              <span className="text-[9px] text-gray-400 font-semibold">+14d</span>
+            </div>
+          </div>
+          {showCritLine && (
+            <p className="text-[9px] text-red-400 mt-1">
+              — Red dashed line = critical threshold (80)
+            </p>
+          )}
+        </div>
+
+        {/* Pressure drivers */}
+        {drivers.length > 0 && (
+          <div className="pt-1 border-t border-gray-100 dark:border-gray-700">
+            <p className="text-[10px] font-bold tracking-widest text-gray-400 dark:text-gray-500 mb-2">
+              TOP PRESSURE DRIVERS
+            </p>
+            <div className="space-y-2">
+              {drivers.map(({ a }) => {
+                const days = getDaysUntilDue(a.dueDate);
+                const dotCls = days < 0
+                  ? 'bg-red-500'
+                  : days <= 2
+                    ? 'bg-orange-500'
+                    : days <= 5
+                      ? 'bg-amber-400'
+                      : 'bg-teal-400';
+                const dayLabel = days < 0
+                  ? `${Math.abs(days)}d overdue`
+                  : days === 0
+                    ? 'Due today'
+                    : `${days}d left`;
+                return (
+                  <div key={a.id} className="flex items-center gap-2.5">
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${dotCls}`} />
+                    <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex-1 truncate">
+                      {a.title}
+                    </span>
+                    <span className="text-[10px] text-gray-400 dark:text-gray-500 shrink-0 font-medium">
+                      {a.progress}% done · {dayLabel}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {!hasActiveWork && (
+          <p className="text-sm text-center text-gray-400 dark:text-gray-500 py-3">
+            No active assignments — enjoy the break! 🎉
+          </p>
+        )}
       </div>
     </div>
   );

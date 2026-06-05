@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAssignmentStore } from '../stores/assignmentStore';
-import { extractFromPdf } from '../services/fileExtractor';
+import { extractFromPdf, extractFromImage } from '../services/fileExtractor';
 import { extractAssignmentsFromOutline } from '../services/ai';
 import { formatDueDate } from '../utils';
 import { DifficultyBadge } from '../components/common/Badge';
@@ -77,6 +77,8 @@ export default function ImportOutline() {
     }
   }
 
+  const isImageFile = (f: File) => f.type.startsWith('image/');
+
   async function handleFile(file: File) {
     if (!file) return;
     setError(null);
@@ -87,8 +89,13 @@ export default function ImportOutline() {
       setStep('extracting');
       if (file.type === 'application/pdf') {
         text = await extractFromPdf(file);
+      } else if (isImageFile(file)) {
+        // Vision AI reads the screenshot/photo and returns raw text,
+        // which then goes through the same outline extraction pipeline.
+        text = await extractFromImage(file);
+        if (!text.trim()) throw new Error('Could not read text from image. Try a clearer screenshot or a PDF.');
       } else {
-        throw new Error('Please upload a PDF file for subject outline import.');
+        throw new Error('Please upload a PDF or image (JPG, PNG, WEBP) of your subject outline.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
@@ -142,7 +149,7 @@ export default function ImportOutline() {
           </button>
           <div className="min-w-0">
             <h1 className="text-xl font-extrabold text-white">Import Subject Outline</h1>
-            <p className="text-indigo-200 text-xs mt-0.5">Upload PDF — AI extracts all assignments</p>
+            <p className="text-indigo-200 text-xs mt-0.5">PDF or image — AI extracts all assignments</p>
           </div>
         </div>
       </div>
@@ -151,7 +158,10 @@ export default function ImportOutline() {
       {(step === 'upload' || step === 'error') && (
         <div className="px-4 pt-4 space-y-3">
           <input
-            ref={fileInputRef} type="file" accept="application/pdf" className="hidden"
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/*"
+            className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleFile(f); }}
           />
 
@@ -164,15 +174,34 @@ export default function ImportOutline() {
             </div>
             <div className="text-center">
               <p className="font-semibold text-gray-800 dark:text-white text-sm">Tap to upload subject outline</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">PDF files only • All assignments extracted automatically</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">PDF  ·  JPG  ·  PNG  ·  WEBP  — all assignments extracted automatically</p>
             </div>
           </button>
+
+          {/* Format pills */}
+          <div className="flex gap-2 justify-center">
+            {[
+              { icon: '📄', label: 'PDF outline', sub: 'Best quality' },
+              { icon: '📸', label: 'Screenshot', sub: 'PNG / JPG' },
+              { icon: '📷', label: 'Camera photo', sub: 'HEIC / WEBP' },
+            ].map(({ icon, label, sub }) => (
+              <button
+                key={label}
+                onClick={() => fileInputRef.current?.click()}
+                className="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 px-2 py-3 flex flex-col items-center gap-1 active:bg-indigo-50 dark:active:bg-indigo-900/20 transition-colors"
+              >
+                <span className="text-xl">{icon}</span>
+                <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300">{label}</span>
+                <span className="text-[9px] text-gray-400 dark:text-gray-500">{sub}</span>
+              </button>
+            ))}
+          </div>
 
           <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 p-4 space-y-3">
             <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 tracking-widest">HOW IT WORKS</p>
             {[
-              ['📄', 'Upload your subject outline PDF'],
-              ['🤖', 'AI reads the document and identifies every assignment'],
+              ['📄', 'Upload your subject outline PDF or take a photo of it'],
+              ['🤖', 'AI reads the document and identifies every assessed item'],
               ['✅', 'Review the extracted list and add them all at once'],
             ].map(([icon, text]) => (
               <div key={text} className="flex items-center gap-3">
@@ -180,7 +209,7 @@ export default function ImportOutline() {
                 <span className="text-sm text-gray-600 dark:text-gray-300">{text}</span>
               </div>
             ))}
-            <p className="text-xs text-gray-400 dark:text-gray-500 pt-1">Powered by Groq AI — no setup required.</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 pt-1">Powered by Gemini AI — no setup required.</p>
           </div>
 
           {step === 'error' && error && (
@@ -206,11 +235,13 @@ export default function ImportOutline() {
             </svg>
           </div>
           <div className="space-y-2 w-full max-w-xs">
-            <StepRow label="Reading PDF"                  done={step === 'analyzing'} active={step === 'extracting'} />
+            <StepRow label="Reading document"              done={step === 'analyzing'} active={step === 'extracting'} />
             <StepRow label="Analysing assignments with AI" done={false}               active={step === 'analyzing'} />
           </div>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
-            {step === 'extracting' ? 'Extracting text from your PDF…' : 'AI is reading the outline and finding all assignments…'}
+            {step === 'extracting'
+              ? 'Extracting text from your document…'
+              : 'AI is reading the outline and finding all assignments…'}
           </p>
         </div>
       )}

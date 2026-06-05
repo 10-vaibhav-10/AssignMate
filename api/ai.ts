@@ -34,6 +34,7 @@ const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat
 const GEMINI_MODEL_MAP: Record<string, string> = {
   'llama-3.3-70b-versatile': 'gemini-1.5-flash',     // full-quality analysis
   'llama-3.1-8b-instant':    'gemini-1.5-flash-8b',  // fast structured extraction
+  'meta-llama/llama-4-scout-17b-16e-instruct':  'gemini-1.5-flash',      // vision / image extraction
 };
 
 /** CORS headers — required for Capacitor (capacitor://localhost) cross-origin calls. */

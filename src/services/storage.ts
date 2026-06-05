@@ -8,7 +8,12 @@ const KEYS = {
 
 const DEFAULT_SETTINGS: AppSettings = {
   notificationsEnabled: false,
-  theme: 'light',
+  // On first launch respect the device/OS dark-mode preference instead of
+  // always forcing light.  matchMedia is undefined in SSR/test environments
+  // so we guard with typeof.
+  theme: (typeof window !== 'undefined' &&
+          window.matchMedia?.('(prefers-color-scheme: dark)').matches)
+    ? 'dark' : 'light',
   timerWork: 25,
   timerBreak: 5,
   timerSound: true,

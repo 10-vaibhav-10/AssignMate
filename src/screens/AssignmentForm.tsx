@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAssignmentStore } from '../stores/assignmentStore';
 import { toast } from '../stores/toastStore';
@@ -31,6 +31,12 @@ export default function AssignmentForm() {
 
   const existing = id ? assignments.find((a) => a.id === id) : undefined;
   const isEdit   = Boolean(existing);
+
+  /* Unique subjects from existing assignments — used for autocomplete */
+  const existingSubjects = useMemo(
+    () => [...new Set(assignments.map((a) => a.subject))].sort(),
+    [assignments],
+  );
 
   const [title,          setTitle]          = useState(existing?.title ?? '');
   const [subject,        setSubject]        = useState(existing?.subject ?? '');
@@ -148,14 +154,22 @@ export default function AssignmentForm() {
           />
         </FormField>
 
-        {/* Subject */}
+        {/* Subject — with autocomplete from existing subjects */}
         <FormField label="Subject / Course *" error={errors.subject}>
           <input
+            list="subject-suggestions"
             className={inputClass(!!errors.subject)}
             placeholder="e.g. Computer Science 301"
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
           />
+          {existingSubjects.length > 0 && (
+            <datalist id="subject-suggestions">
+              {existingSubjects.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+          )}
         </FormField>
 
         {/* Details */}

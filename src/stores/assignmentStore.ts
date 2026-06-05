@@ -12,6 +12,7 @@ export interface CreateAssignmentInput {
   estimatedHours: number;
   priority?: Priority;
   grade?: number;
+  weight?: string;
 }
 
 interface AssignmentStore {

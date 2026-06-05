@@ -112,10 +112,13 @@ export default function ImportOutline() {
     const toAdd = extracted.filter((_, i) => selected.has(i));
     for (const a of toAdd) {
       addAssignment({
-        title: a.title, subject,
-        details: a.details, dueDate: a.dueDate,
-        difficulty: a.difficulty as Difficulty,
+        title:          a.title,
+        subject,
+        details:        a.details,
+        dueDate:        a.dueDate,
+        difficulty:     a.difficulty as Difficulty,
         estimatedHours: a.estimatedHours,
+        weight:         a.weight || undefined,   // persist "25%" weighting
       });
     }
     navigate('/assignments');

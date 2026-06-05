@@ -57,6 +57,8 @@ export default function StudyTimer() {
   const workMinsRef   = useRef(settings.timerWork);
   const breakSecsRef  = useRef(settings.timerBreak * 60);
   const sessionsRef   = useRef(0);
+  const isRunningRef  = useRef(false);       // drift-correction needs live value
+  const lastTickRef   = useRef(Date.now());  // timestamp of last interval tick
 
   modeRef.current       = mode;
   assignmentRef.current = assignment;
@@ -64,6 +66,7 @@ export default function StudyTimer() {
   workMinsRef.current   = settings.timerWork;
   breakSecsRef.current  = settings.timerBreak * 60;
   sessionsRef.current   = sessionsCompleted;
+  isRunningRef.current  = isRunning;
 
   /* ── Derived display values ─────────────────────────────────────── */
   const totalSeconds =
@@ -76,11 +79,46 @@ export default function StudyTimer() {
   const mins       = Math.floor(seconds / 60);
   const secs       = seconds % 60;
 
+  /* ── Screen Wake Lock — keeps display on while timer is running ─── */
+  useEffect(() => {
+    if (!isRunning || !('wakeLock' in navigator)) return;
+    let sentinel: WakeLockSentinel | null = null;
+    let active = true;
+    (async () => {
+      try {
+        sentinel = await (navigator as Navigator & { wakeLock: { request(t: string): Promise<WakeLockSentinel> } }).wakeLock.request('screen');
+      } catch { /* not available — silent */ }
+    })();
+    return () => {
+      active = false;
+      void active; // suppress lint
+      sentinel?.release().catch(() => {});
+    };
+  }, [isRunning]);
+
+  /* ── Visibility-change drift correction ─────────────────────────
+     Android (and desktop) throttle JS timers when the app/tab is
+     backgrounded.  When the user returns, we compute real elapsed
+     time and fast-forward the counter to the correct value.         */
+  useEffect(() => {
+    function onVisibility() {
+      if (document.hidden || !isRunningRef.current) return;
+      const missed = Math.floor((Date.now() - lastTickRef.current) / 1000) - 1;
+      if (missed > 1) {
+        setSeconds((prev) => Math.max(0, prev - missed));
+        lastTickRef.current = Date.now();
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []); // register once — uses refs for live state
+
   /* ── Main interval ──────────────────────────────────────────────── */
   useEffect(() => {
     if (!isRunning) return;
 
     const timerId = window.setInterval(() => {
+      lastTickRef.current = Date.now(); // update for drift correction
       setSeconds((prev) => {
         const next = prev - 1;
         if (next <= 0) {

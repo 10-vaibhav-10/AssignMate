@@ -38,6 +38,8 @@ export default function AssignmentDetail() {
   const [aiError, setAiError]         = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [studyPlanExpanded, setStudyPlanExpanded] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [addingTask, setAddingTask]    = useState(false);
 
   const assignment = assignments.find((a) => a.id === id);
 
@@ -82,18 +84,23 @@ export default function AssignmentDetail() {
         aiExplanation: response.explanation,
         aiStudyPlan:   JSON.stringify(response.studyPlan),
       });
-      if (assignmentTasks.length === 0) {
-        const newTasks = response.tasks.map((t) => ({
-          id:           crypto.randomUUID(),
-          assignmentId: snap.id,
-          title:        t.title,
-          completed:    false,
-          dueDate:      offsetDate(t.dueDateOffset),
-        }));
-        addTasks(newTasks);
-      }
+      // Always refresh tasks from AI — remove old AI tasks and create new ones
+      // so the task list stays in sync with the updated study plan.
+      removeByAssignment(snap.id);
+      const freshTasks = response.tasks.map((t, i) => ({
+        id:           crypto.randomUUID(),
+        assignmentId: snap.id,
+        title:        t.title,
+        completed:    false,
+        dueDate:      offsetDate(t.dueDateOffset),
+        order:        i,
+      }));
+      addTasks(freshTasks);
+      // Reset progress since tasks were replaced
+      updateAssignment(snap.id, { progress: 0 });
       setAiStatus('success');
-      toast.success('AI analysis complete! ✨');
+      const verb = snap.aiExplanation ? 'updated' : 'complete';
+      toast.success(`AI analysis ${verb}! ✨`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Analysis failed. Please try again.';
       setAiError(msg);
@@ -120,6 +127,22 @@ export default function AssignmentDetail() {
     if (completed === updatedTasks.length && updatedTasks.length > 0) {
       toast.success('All tasks complete — assignment done! 🎉');
     }
+  }
+
+  /* ── Manual task entry ───────────────────────────────────────────── */
+  function handleAddManualTask() {
+    const title = newTaskTitle.trim();
+    if (!title || !assignment) return;
+    const maxOrder = assignmentTasks.reduce((m, t) => Math.max(m, t.order ?? 0), -1);
+    addTasks([{
+      id:           crypto.randomUUID(),
+      assignmentId: assignment.id,
+      title,
+      completed:    false,
+      order:        maxOrder + 1,
+    }]);
+    setNewTaskTitle('');
+    // Keep form open so user can chain-add tasks
   }
 
   /* ── Delete ────────────────────────────────────────────────────── */
@@ -210,6 +233,13 @@ export default function AssignmentDetail() {
             <span className="text-[11px] font-bold bg-white/20 text-white px-2.5 py-0.5 rounded-full flex items-center gap-1">
               <ClockIcon className="w-3 h-3" />
               {loggedMinutes}m logged
+            </span>
+          )}
+
+          {/* Weight chip — e.g. "Worth 25%" */}
+          {assignment.weight && assignment.weight !== '0%' && (
+            <span className="text-[11px] font-bold bg-white/20 text-white px-2.5 py-0.5 rounded-full">
+              🎯 Worth {assignment.weight}
             </span>
           )}
 
@@ -398,15 +428,23 @@ export default function AssignmentDetail() {
                 </span>
               )}
             </h2>
+            <button
+              onClick={() => setAddingTask(true)}
+              className="text-xs font-bold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/40 px-3 py-1 rounded-full hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors"
+            >
+              + Add task
+            </button>
           </div>
 
-          {assignmentTasks.length === 0 ? (
+          {assignmentTasks.length === 0 && !addingTask && (
             <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl p-4 text-center border border-gray-100 dark:border-gray-700">
               <p className="text-sm text-gray-400 dark:text-gray-500">
                 {assignment.aiExplanation ? 'No tasks generated.' : 'Tasks will appear after AI analysis.'}
               </p>
             </div>
-          ) : (
+          )}
+
+          {assignmentTasks.length > 0 && (
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm shadow-indigo-100/40 dark:shadow-gray-900/30 overflow-hidden">
               {assignmentTasks.map((task, i) => (
                 <div
@@ -475,6 +513,37 @@ export default function AssignmentDetail() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* ── Inline "Add task" form ─────────────────────────── */}
+          {addingTask && (
+            <div className="mt-2 flex gap-2">
+              <input
+                autoFocus
+                type="text"
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAddManualTask();
+                  if (e.key === 'Escape') { setAddingTask(false); setNewTaskTitle(''); }
+                }}
+                placeholder="Task description…"
+                className="flex-1 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/40"
+              />
+              <button
+                onClick={handleAddManualTask}
+                disabled={!newTaskTitle.trim()}
+                className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40 active:scale-95 transition-all"
+              >
+                Add
+              </button>
+              <button
+                onClick={() => { setAddingTask(false); setNewTaskTitle(''); }}
+                className="px-3 py-2.5 rounded-xl text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 text-sm"
+              >
+                ✕
+              </button>
             </div>
           )}
         </section>

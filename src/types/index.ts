@@ -16,6 +16,7 @@ export interface Assignment {
   studyMinutes?: number;   // total minutes logged via timer
   priority?: Priority;     // urgent | normal | low
   grade?: number;          // 0–100 once graded, undefined = not yet graded
+  weight?: string;         // e.g. "25%" — weighting in final grade (from outline import)
 }
 
 export interface Task {

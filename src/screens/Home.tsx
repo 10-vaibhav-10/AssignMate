@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { format, parseISO, isWithinInterval, addDays } from 'date-fns';
+import { format } from 'date-fns';
 import { useAssignmentStore } from '../stores/assignmentStore';
 import { useTaskStore } from '../stores/taskStore';
 import { useStreakStore } from '../stores/streakStore';
@@ -7,6 +7,7 @@ import { isOverdue, getGreeting, formatDueDate, formatRelativeDue, getDaysUntilD
 import { DifficultyBadge } from '../components/common/Badge';
 import { ProgressBar } from '../components/common/ProgressBar';
 import { PlusIcon, FlameIcon, DocumentArrowUpIcon } from '../components/Icons';
+import { toast } from '../stores/toastStore';
 import type { Difficulty } from '../types';
 
 /* ── Subject → gradient mapping (hash-stable) ─────────────────── */
@@ -26,19 +27,33 @@ function subjectGradient(subject: string): string {
 }
 
 export default function Home() {
-  const navigate = useNavigate();
-  const assignments = useAssignmentStore((s) => s.assignments);
-  const tasks = useTaskStore((s) => s.tasks);
-  const streakData = useStreakStore((s) => s.data);
+  const navigate         = useNavigate();
+  const assignments      = useAssignmentStore((s) => s.assignments);
+  const updateAssignment = useAssignmentStore((s) => s.update);
+  const tasks            = useTaskStore((s) => s.tasks);
+  const toggleTask       = useTaskStore((s) => s.toggle);
+  const streakData       = useStreakStore((s) => s.data);
+
+  /* Toggle a task directly from the Home screen and recalculate progress */
+  function handleToggleTask(taskId: string, assignmentId: string) {
+    toggleTask(taskId);
+    const assignTasks = useTaskStore.getState().tasks.filter((t) => t.assignmentId === assignmentId);
+    const completed   = assignTasks.filter((t) => t.completed).length;
+    const progress    = assignTasks.length > 0 ? Math.round((completed / assignTasks.length) * 100) : 0;
+    updateAssignment(assignmentId, { progress });
+    if (progress === 100) toast.success('Assignment complete! 🎉');
+  }
 
   const todayStr = format(new Date(), 'yyyy-MM-dd');
   const dateLabel = format(new Date(), 'EEEE, d MMMM');
 
   const activeAssignments = assignments.filter((a) => a.progress < 100);
   const overdueAssignments = assignments.filter(isOverdue);
+  const dueToday = assignments.filter((a) => getDaysUntilDue(a.dueDate) === 0 && a.progress < 100);
+
   const dueSoon = assignments.filter((a) => {
     const d = getDaysUntilDue(a.dueDate);
-    return d >= 0 && d <= 3 && a.progress < 100;
+    return d >= 1 && d <= 3 && a.progress < 100;   // excludes today (shown separately)
   });
 
   const todayTasks = tasks.filter((t) => {
@@ -66,10 +81,11 @@ export default function Home() {
     return 'All clear — enjoy the break! 🎉';
   }
 
+  // Assignments due in 1–7 days (today shown separately; overdue shown separately)
   const upcoming = assignments.filter((a) => {
-    if (a.progress === 100 || isOverdue(a)) return false;
-    const due = parseISO(a.dueDate);
-    return isWithinInterval(due, { start: new Date(), end: addDays(new Date(), 7) });
+    if (a.progress === 100) return false;
+    const d = getDaysUntilDue(a.dueDate);
+    return d >= 1 && d <= 7;
   });
 
   /* ── Deadline cluster detection ─────────────────────────────── */
@@ -260,6 +276,23 @@ export default function Home() {
           </section>
         )}
 
+        {/* ── Due Today ────────────────────────────────────────────── */}
+        {dueToday.length > 0 && (
+          <section>
+            <SectionHeader icon="🗓️" label="DUE TODAY" today />
+            <div className="space-y-2.5">
+              {dueToday.map((a) => (
+                <AssignmentCard
+                  key={a.id}
+                  assignment={a}
+                  onClick={() => navigate(`/assignments/${a.id}`)}
+                  today
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* ── Due This Week ────────────────────────────────────────── */}
         {upcoming.length > 0 && (
           <section>
@@ -286,17 +319,25 @@ export default function Home() {
                 return (
                   <div
                     key={task.id}
-                    className={`flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-violet-50/60 dark:hover:bg-violet-950/20 transition-colors ${
+                    className={`flex items-center gap-3 px-4 py-3.5 transition-colors ${
                       i !== 0 ? 'border-t border-gray-50 dark:border-white/5' : ''
                     }`}
-                    onClick={() => navigate(`/assignments/${task.assignmentId}`)}
                   >
-                    <div className="w-2 h-2 rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-500 shrink-0" />
-                    <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 truncate font-semibold">
+                    {/* Tap checkbox to complete without leaving Home */}
+                    <button
+                      onClick={() => handleToggleTask(task.id, task.assignmentId)}
+                      className="w-5 h-5 rounded-full border-2 border-violet-300 dark:border-violet-700 flex items-center justify-center shrink-0 hover:border-violet-500 dark:hover:border-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/40 transition-colors"
+                      aria-label="Complete task"
+                    />
+                    {/* Tap title to open assignment detail */}
+                    <span
+                      className="text-sm text-gray-800 dark:text-gray-200 flex-1 truncate font-semibold cursor-pointer hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+                      onClick={() => navigate(`/assignments/${task.assignmentId}`)}
+                    >
                       {task.title}
                     </span>
                     {assignment && (
-                      <span className="text-[10px] text-violet-500 dark:text-violet-400 font-bold truncate max-w-[90px] bg-violet-50 dark:bg-violet-950/40 px-2 py-0.5 rounded-full">
+                      <span className="text-[10px] text-violet-500 dark:text-violet-400 font-bold truncate max-w-[90px] bg-violet-50 dark:bg-violet-950/40 px-2 py-0.5 rounded-full shrink-0">
                         {assignment.subject.split(' ')[0]}
                       </span>
                     )}
@@ -383,29 +424,25 @@ function SectionHeader({
   icon,
   label,
   danger = false,
+  today = false,
 }: {
   icon: string;
   label: string;
   danger?: boolean;
+  today?: boolean;
 }) {
+  const iconBg = danger ? 'bg-red-100 dark:bg-red-900/30'
+    : today ? 'bg-amber-100 dark:bg-amber-900/30'
+    : 'bg-violet-100 dark:bg-violet-900/30';
+  const textCls = danger ? 'text-red-600 dark:text-red-400'
+    : today ? 'text-amber-600 dark:text-amber-400'
+    : 'text-gray-700 dark:text-gray-300';
   return (
     <div className="flex items-center gap-2 mb-3">
-      <div
-        className={`w-6 h-6 rounded-lg flex items-center justify-center text-[13px] ${
-          danger
-            ? 'bg-red-100 dark:bg-red-900/30'
-            : 'bg-violet-100 dark:bg-violet-900/30'
-        }`}
-      >
+      <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-[13px] ${iconBg}`}>
         {icon}
       </div>
-      <h2
-        className={`font-black text-xs tracking-widest ${
-          danger ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'
-        }`}
-      >
-        {label}
-      </h2>
+      <h2 className={`font-black text-xs tracking-widest ${textCls}`}>{label}</h2>
     </div>
   );
 }
@@ -414,6 +451,7 @@ function AssignmentCard({
   assignment,
   onClick,
   overdue = false,
+  today = false,
 }: {
   assignment: {
     id: string;
@@ -425,16 +463,21 @@ function AssignmentCard({
   };
   onClick(): void;
   overdue?: boolean;
+  today?: boolean;
 }) {
   const grad = overdue
     ? 'from-rose-500 to-red-600'
-    : assignment.progress === 100
-      ? 'from-emerald-500 to-teal-600'
-      : subjectGradient(assignment.subject);
+    : today
+      ? 'from-amber-500 to-orange-500'
+      : assignment.progress === 100
+        ? 'from-emerald-500 to-teal-600'
+        : subjectGradient(assignment.subject);
 
   const shadowColor = overdue
     ? 'rgba(244,63,94,0.18)'
-    : 'rgba(124,58,237,0.12)';
+    : today
+      ? 'rgba(245,158,11,0.18)'
+      : 'rgba(124,58,237,0.12)';
 
   return (
     <div
@@ -453,7 +496,9 @@ function AssignmentCard({
                 className={`inline-block text-[9px] font-black tracking-wider mb-1.5 px-2 py-0.5 rounded-full ${
                   overdue
                     ? 'bg-red-50 dark:bg-red-900/25 text-red-600 dark:text-red-400'
-                    : 'bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400'
+                    : today
+                      ? 'bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-400'
+                      : 'bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400'
                 }`}
               >
                 {assignment.subject}

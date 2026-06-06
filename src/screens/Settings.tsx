@@ -253,7 +253,7 @@ export default function Settings() {
 
         {/* ── Notifications ──────────────────────────────────── */}
         <SettingsSection icon="🔔" iconBg="bg-violet-100 dark:bg-violet-900/30" title="Notifications">
-          {!('Notification' in window) ? (
+          {(!isAndroid && !('Notification' in window)) ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">
               {isAndroid ? 'Notifications are not available in this version.' : 'Not supported in this browser.'}
             </p>

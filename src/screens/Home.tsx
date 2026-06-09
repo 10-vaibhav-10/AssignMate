@@ -146,7 +146,7 @@ export default function Home() {
           <GlassChip label="ACTIVE" value={String(activeAssignments.length)} />
           <GlassChip
             label="TODAY"
-            value={todayTasks.length > 0 ? `${completedTodayCount}/${todayTasks.length}` : '—'}
+            value={todayTasks.length > 0 ? `${completedTodayCount}/${todayTasks.length}` : 'Free'}
             accent={todayTasks.length > 0 && completedTodayCount < todayTasks.length}
           />
           <GlassChip

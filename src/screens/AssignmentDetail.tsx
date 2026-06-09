@@ -39,8 +39,9 @@ export default function AssignmentDetail() {
   const [aiError, setAiError]         = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [studyPlanExpanded, setStudyPlanExpanded] = useState(false);
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [addingTask, setAddingTask]    = useState(false);
+  const [newTaskTitle,   setNewTaskTitle]   = useState('');
+  const [newTaskDueDate, setNewTaskDueDate] = useState('');
+  const [addingTask,     setAddingTask]     = useState(false);
 
   const assignment = assignments.find((a) => a.id === id);
 
@@ -143,10 +144,12 @@ export default function AssignmentDetail() {
       assignmentId: assignment.id,
       title,
       completed:    false,
+      dueDate:      newTaskDueDate || undefined,
       order:        maxOrder + 1,
     }]);
     setNewTaskTitle('');
-    // Keep form open so user can chain-add tasks
+    setNewTaskDueDate('');
+    if (newTaskDueDate) rescheduleAll(useAssignmentStore.getState().assignments);
   }
 
   /* ── Delete ────────────────────────────────────────────────────── */
@@ -527,7 +530,7 @@ export default function AssignmentDetail() {
 
           {/* ── Inline "Add task" form ─────────────────────────── */}
           {addingTask && (
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 bg-white dark:bg-gray-800 rounded-2xl shadow-sm shadow-indigo-100/40 dark:shadow-gray-900/30 p-3 space-y-2">
               <input
                 autoFocus
                 type="text"
@@ -535,24 +538,35 @@ export default function AssignmentDetail() {
                 onChange={(e) => setNewTaskTitle(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleAddManualTask();
-                  if (e.key === 'Escape') { setAddingTask(false); setNewTaskTitle(''); }
+                  if (e.key === 'Escape') { setAddingTask(false); setNewTaskTitle(''); setNewTaskDueDate(''); }
                 }}
-                placeholder="Task description…"
-                className="flex-1 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/40"
+                placeholder="What needs doing?"
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/60 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/40"
               />
-              <button
-                onClick={handleAddManualTask}
-                disabled={!newTaskTitle.trim()}
-                className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40 active:scale-95 transition-all"
-              >
-                Add
-              </button>
-              <button
-                onClick={() => { setAddingTask(false); setNewTaskTitle(''); }}
-                className="px-3 py-2.5 rounded-xl text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 text-sm"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-400 dark:text-gray-500 shrink-0">Due date</label>
+                <input
+                  type="date"
+                  value={newTaskDueDate}
+                  onChange={(e) => setNewTaskDueDate(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/60 text-sm text-gray-700 dark:text-gray-300 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/40"
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleAddManualTask}
+                  disabled={!newTaskTitle.trim()}
+                  className="flex-1 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40 active:scale-95 transition-all"
+                >
+                  Add task
+                </button>
+                <button
+                  onClick={() => { setAddingTask(false); setNewTaskTitle(''); setNewTaskDueDate(''); }}
+                  className="px-4 py-2.5 rounded-xl text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-700 text-sm font-medium"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
         </section>

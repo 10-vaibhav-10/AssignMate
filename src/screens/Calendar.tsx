@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAssignmentStore } from '../stores/assignmentStore';
+import { useTaskStore } from '../stores/taskStore';
 import { isOverdue } from '../utils';
 import { DifficultyBadge } from '../components/common/Badge';
 import { ProgressBar } from '../components/common/ProgressBar';
@@ -12,6 +13,7 @@ const DAY_NAMES = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 export default function Calendar() {
   const navigate = useNavigate();
   const assignments = useAssignmentStore((s) => s.assignments);
+  const tasks       = useTaskStore((s) => s.tasks);
   const [viewDate, setViewDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
 
@@ -36,8 +38,23 @@ export default function Calendar() {
     });
   }
 
+  function tasksForDay(day: number) {
+    const date = new Date(year, month, day);
+    return tasks.filter((t) => {
+      if (!t.dueDate || t.completed) return false;
+      try { return isSameDay(parseISO(t.dueDate), date); }
+      catch { return false; }
+    });
+  }
+
   const selectedAssignments = assignments.filter((a) => {
     try { return isSameDay(parseISO(a.dueDate), selectedDate); }
+    catch { return false; }
+  });
+
+  const selectedTasks = tasks.filter((t) => {
+    if (!t.dueDate) return false;
+    try { return isSameDay(parseISO(t.dueDate), selectedDate); }
     catch { return false; }
   });
 
@@ -84,6 +101,7 @@ export default function Calendar() {
 
             const date = new Date(year, month, day);
             const dayAssignments = assignmentsForDay(day);
+            const dayTasks       = tasksForDay(day);
             const isSelected = isSameDay(date, selectedDate);
             const today = isToday(date);
 
@@ -110,9 +128,9 @@ export default function Calendar() {
                 >
                   {day}
                 </span>
-                {dayAssignments.length > 0 && (
+                {(dayAssignments.length > 0 || dayTasks.length > 0) && (
                   <div className="flex gap-0.5 mt-0.5">
-                    {dayAssignments.slice(0, 3).map((a) => (
+                    {dayAssignments.slice(0, 2).map((a) => (
                       <div
                         key={a.id}
                         className={`w-1.5 h-1.5 rounded-full ${
@@ -126,6 +144,14 @@ export default function Calendar() {
                         }`}
                       />
                     ))}
+                    {dayTasks.slice(0, 2).map((t) => (
+                      <div
+                        key={t.id}
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          isSelected ? 'bg-white/50' : 'bg-amber-400'
+                        }`}
+                      />
+                    ))}
                   </div>
                 )}
               </button>
@@ -135,57 +161,108 @@ export default function Calendar() {
       </div>
 
       {/* ── Selected day ──────────────────────────────────────── */}
-      <div className="px-4 mt-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-bold text-gray-900 dark:text-white text-sm">
-            {isToday(selectedDate)
-              ? "Today's Deadlines"
-              : format(selectedDate, 'EEEE, MMMM d')}
-          </h3>
-          {selectedAssignments.length > 0 && (
-            <span className="text-[11px] font-bold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-2.5 py-0.5 rounded-full">
-              {selectedAssignments.length} due
-            </span>
-          )}
-        </div>
+      <div className="px-4 mt-4 space-y-4">
 
-        {selectedAssignments.length === 0 ? (
-          <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 text-center shadow-sm">
-            <p className="text-2xl mb-1">✓</p>
-            <p className="text-sm text-gray-400 dark:text-gray-500 font-medium">Nothing due on this day</p>
+        {/* Assignments due */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-gray-900 dark:text-white text-sm">
+              {isToday(selectedDate) ? "Today's Deadlines" : format(selectedDate, 'EEEE, MMMM d')}
+            </h3>
+            {selectedAssignments.length > 0 && (
+              <span className="text-[11px] font-bold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-2.5 py-0.5 rounded-full">
+                {selectedAssignments.length} due
+              </span>
+            )}
           </div>
-        ) : (
-          <div className="space-y-2.5">
-            {selectedAssignments.map((a) => (
-              <div
-                key={a.id}
-                onClick={() => navigate(`/assignments/${a.id}`)}
-                className="bg-white dark:bg-gray-800 rounded-2xl overflow-hidden shadow-sm shadow-indigo-100/50 dark:shadow-gray-900/30 cursor-pointer active:scale-[0.98] transition-all"
-              >
+
+          {selectedAssignments.length === 0 && selectedTasks.length > 0 ? (
+            <div className="bg-white dark:bg-gray-800 rounded-2xl p-4 text-center shadow-sm">
+              <p className="text-sm text-gray-400 dark:text-gray-500 font-medium">No assignments due</p>
+            </div>
+          ) : selectedAssignments.length > 0 ? (
+            <div className="space-y-2.5">
+              {selectedAssignments.map((a) => (
                 <div
-                  className={`h-1 bg-gradient-to-r ${
-                    isOverdue(a)
-                      ? 'from-red-500 to-rose-400'
-                      : a.progress === 100
-                        ? 'from-emerald-500 to-green-400'
-                        : 'from-indigo-500 to-violet-500'
-                  }`}
-                />
-                <div className="p-4">
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] text-gray-400 dark:text-gray-500 font-medium mb-0.5">{a.subject}</p>
-                      <p className="font-bold text-gray-900 dark:text-white text-sm truncate">{a.title}</p>
+                  key={a.id}
+                  onClick={() => navigate(`/assignments/${a.id}`)}
+                  className="bg-white dark:bg-gray-800 rounded-2xl overflow-hidden shadow-sm shadow-indigo-100/50 dark:shadow-gray-900/30 cursor-pointer active:scale-[0.98] transition-all"
+                >
+                  <div
+                    className={`h-1 bg-gradient-to-r ${
+                      isOverdue(a)
+                        ? 'from-red-500 to-rose-400'
+                        : a.progress === 100
+                          ? 'from-emerald-500 to-green-400'
+                          : 'from-indigo-500 to-violet-500'
+                    }`}
+                  />
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500 font-medium mb-0.5">{a.subject}</p>
+                        <p className="font-bold text-gray-900 dark:text-white text-sm truncate">{a.title}</p>
+                      </div>
+                      <DifficultyBadge difficulty={a.difficulty} />
                     </div>
-                    <DifficultyBadge difficulty={a.difficulty} />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <ProgressBar progress={a.progress} className="flex-1" />
-                    <span className="text-xs font-bold text-gray-500 dark:text-gray-400">{a.progress}%</span>
+                    <div className="flex items-center gap-2">
+                      <ProgressBar progress={a.progress} className="flex-1" />
+                      <span className="text-xs font-bold text-gray-500 dark:text-gray-400">{a.progress}%</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Tasks due on this day */}
+        {selectedTasks.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-gray-900 dark:text-white text-sm">Tasks due</h3>
+              <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-2.5 py-0.5 rounded-full">
+                {selectedTasks.filter(t => !t.completed).length} pending
+              </span>
+            </div>
+            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm shadow-indigo-100/40 dark:shadow-gray-900/30 overflow-hidden">
+              {selectedTasks.map((task, i) => {
+                const parent = assignments.find(a => a.id === task.assignmentId);
+                return (
+                  <div
+                    key={task.id}
+                    onClick={() => parent && navigate(`/assignments/${parent.id}`)}
+                    className={`flex items-center gap-3 px-4 py-3 cursor-pointer active:bg-amber-50/60 dark:active:bg-amber-900/20 transition-colors ${
+                      i !== 0 ? 'border-t border-gray-50 dark:border-gray-700' : ''
+                    }`}
+                  >
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${task.completed ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium truncate ${task.completed ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-800 dark:text-gray-200'}`}>
+                        {task.title}
+                      </p>
+                      {parent && (
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500 truncate mt-0.5">
+                          {parent.subject} · {parent.title}
+                        </p>
+                      )}
+                    </div>
+                    {task.completed && (
+                      <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full shrink-0">
+                        Done
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {selectedAssignments.length === 0 && selectedTasks.length === 0 && (
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 text-center shadow-sm -mt-2">
+            <p className="text-2xl mb-1">✓</p>
+            <p className="text-sm text-gray-400 dark:text-gray-500 font-medium">Nothing on this day</p>
           </div>
         )}
       </div>

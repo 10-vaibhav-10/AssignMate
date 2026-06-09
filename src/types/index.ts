@@ -48,6 +48,8 @@ export type AiStatus = 'idle' | 'loading' | 'success' | 'error';
 
 export interface AppSettings {
   notificationsEnabled: boolean;
+  notificationHour: number;   // 0–23, hour of day to fire reminders (default 9)
+  notificationMinute: number; // 0 | 15 | 30 | 45, minute of hour (default 0)
   theme: 'light' | 'dark';
   timerWork: number;    // minutes (default 25)
   timerBreak: number;   // minutes (default 5)

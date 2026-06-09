@@ -23,6 +23,7 @@ export default function Settings() {
   const loadSettings    = useSettingsStore((s) => s.load);
   const assignments     = useAssignmentStore((s) => s.assignments);
   const loadAssignments = useAssignmentStore((s) => s.load);
+  const tasks           = useTaskStore((s) => s.tasks);
   const loadTasks       = useTaskStore((s) => s.load);
 
   const [showClearDialog,  setShowClearDialog]  = useState(false);
@@ -32,10 +33,6 @@ export default function Settings() {
 
   const backupFileRef = useRef<HTMLInputElement>(null);
 
-  /* ── Refresh permission state on mount ──────────────────────────
-     On Android, the user can grant/revoke notification permission or the
-     "Alarms & Reminders" special-access in system Settings at any time.
-     Re-read actual state each time this screen opens. */
   useEffect(() => {
     refreshAndroidPermission().then(setPermState).catch(() => {});
     canScheduleExactAlarms().then(setExactAlarmOk).catch(() => {});
@@ -47,7 +44,7 @@ export default function Settings() {
     loadAssignments();
     loadTasks();
     setShowClearDialog(false);
-    toast.success('All data cleared.');
+    toast.success('Everything cleared. Fresh start!');
   }
 
   /* ── Notifications ────────────────────────────────────────────── */
@@ -57,28 +54,27 @@ export default function Settings() {
     setPermState(perm);
     if (perm === 'granted') {
       updateSettings({ notificationsEnabled: true });
-      checkAndNotify(assignments, true);
-      if (isAndroid) toast.success('Notifications enabled! You\'ll be reminded at 9 am.');
+      checkAndNotify(assignments, tasks, true, settings.notificationHour ?? 9, settings.notificationMinute ?? 0);
+      if (isAndroid) toast.success(`You're all set! Reminders will arrive at ${formatTime(settings.notificationHour ?? 9, settings.notificationMinute ?? 0)}.`);
     }
     setNotifRequesting(false);
   }
 
   function handleToggleNotifications(enabled: boolean) {
     updateSettings({ notificationsEnabled: enabled });
-    if (enabled) checkAndNotify(assignments, true);
+    if (enabled) checkAndNotify(assignments, tasks, true, settings.notificationHour ?? 9, settings.notificationMinute ?? 0);
   }
 
   /* ── Calendar export ─────────────────────────────────────────── */
   async function handleExportCalendar() {
     if (assignments.length === 0) {
-      toast.warning('No assignments to export.');
+      toast.warning('No assignments to export yet.');
       return;
     }
     try {
       await downloadICalendar(assignments);
       if (!isAndroid) toast.success('Calendar file downloaded!');
     } catch (err) {
-      // User cancelled the share sheet — not an error
       if (err instanceof Error && err.name !== 'AbortError') {
         toast.error('Could not export calendar.');
       }
@@ -109,20 +105,35 @@ export default function Settings() {
       loadAssignments();
       loadTasks();
       loadSettings();
-      toast.success('Backup restored successfully! 🎉');
+      toast.success('Backup restored! Welcome back 🎉');
     } catch {
-      toast.error('Invalid backup file — please use an AssignMate backup.');
+      toast.error('That file doesn\'t look right — please use an AssignMate backup.');
     }
   }
 
-  /* ── Timer stepper helpers ───────────────────────────────────── */
+  /* ── Pomodoro timer steppers ─────────────────────────────────── */
   function adjustTimer(field: 'timerWork' | 'timerBreak', delta: number) {
     const min = field === 'timerWork' ? 5 : 1;
     const max = field === 'timerWork' ? 90 : 30;
     updateSettings({ [field]: Math.min(max, Math.max(min, settings[field] + delta)) });
   }
 
+  /* ── Reminder time (15-min steps through the full day) ──────── */
+  function adjustNotificationTime(delta: number) {
+    const h  = settings.notificationHour   ?? 9;
+    const m  = settings.notificationMinute ?? 0;
+    const currentSlot = h * 4 + Math.round(m / 15);
+    const nextSlot    = (currentSlot + delta + 96) % 96;
+    const nextHour    = Math.floor(nextSlot / 4);
+    const nextMinute  = (nextSlot % 4) * 15;
+    updateSettings({ notificationHour: nextHour, notificationMinute: nextMinute });
+    if (settings.notificationsEnabled) {
+      checkAndNotify(assignments, tasks, true, nextHour, nextMinute);
+    }
+  }
+
   const isDark = settings.theme === 'dark';
+  const reminderTime = formatTime(settings.notificationHour ?? 9, settings.notificationMinute ?? 0);
 
   return (
     <div className="pb-8">
@@ -130,14 +141,14 @@ export default function Settings() {
       <div className="relative bg-gradient-to-br from-indigo-700 via-indigo-600 to-violet-700 overflow-hidden px-5 pt-14 pb-6">
         <div className="absolute -top-10 -right-10 w-40 h-40 bg-violet-400/20 rounded-full blur-3xl pointer-events-none" />
         <h1 className="relative text-white text-2xl font-extrabold">Settings</h1>
-        <p className="relative text-indigo-200 text-sm font-medium mt-0.5">Manage your app preferences</p>
+        <p className="relative text-indigo-200 text-sm font-medium mt-0.5">Tweak things to your liking</p>
       </div>
 
       <div className="px-4 -mt-3 relative z-10 space-y-3">
 
         {/* ── Appearance ─────────────────────────────────────── */}
         <SettingsSection icon="🎨" iconBg="bg-indigo-100 dark:bg-indigo-900/40" title="Appearance">
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Switch between light and dark mode.</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Pick whichever feels better on your eyes.</p>
           <div className="flex gap-2">
             <button
               onClick={() => updateSettings({ theme: 'light' })}
@@ -165,13 +176,12 @@ export default function Settings() {
         </SettingsSection>
 
         {/* ── Pomodoro Timer ─────────────────────────────────── */}
-        <SettingsSection icon="⏱️" iconBg="bg-violet-100 dark:bg-violet-900/30" title="Pomodoro Timer">
+        <SettingsSection icon="⏱️" iconBg="bg-violet-100 dark:bg-violet-900/30" title="Focus Timer">
 
-          {/* Work duration */}
           <div className="flex items-center justify-between py-1.5">
             <div>
               <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Focus duration</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500">Default: 25 min</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500">How long each work block runs</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -194,11 +204,10 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Short break */}
           <div className="flex items-center justify-between py-1.5 border-t border-gray-50 dark:border-gray-700 mt-1">
             <div>
               <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Short break</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500">Default: 5 min</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500">Breather between focus blocks</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -221,16 +230,14 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Long break info */}
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-2 mb-1 bg-gray-50 dark:bg-gray-700/60 px-3 py-2 rounded-xl">
-            🏖️ Long break (15 min) fires automatically after every 4 focus sessions.
+            🏖️ After 4 focus blocks you'll earn a longer 15-minute break automatically.
           </p>
 
-          {/* Sound toggle */}
           <div className="flex items-center justify-between py-1.5 border-t border-gray-50 dark:border-gray-700 mt-1">
             <div>
-              <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Session sound</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500">Beep when each session ends</p>
+              <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">End-of-session sound</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500">A beep when each block finishes</p>
             </div>
             <button
               onClick={() => updateSettings({ timerSound: !settings.timerSound })}
@@ -252,42 +259,44 @@ export default function Settings() {
         </SettingsSection>
 
         {/* ── Notifications ──────────────────────────────────── */}
-        <SettingsSection icon="🔔" iconBg="bg-violet-100 dark:bg-violet-900/30" title="Notifications">
+        <SettingsSection icon="🔔" iconBg="bg-violet-100 dark:bg-violet-900/30" title="Reminders">
           {(!isAndroid && !('Notification' in window)) ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              {isAndroid ? 'Notifications are not available in this version.' : 'Not supported in this browser.'}
+              Your browser doesn't support notifications.
             </p>
           ) : permState === 'denied' ? (
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
                 {isAndroid
-                  ? 'Notifications are blocked. Enable them in Android Settings → Apps → AssignMate → Notifications.'
-                  : "Notifications are blocked. Allow them in your browser's site settings."}
+                  ? 'Notifications are turned off. Head to Android Settings → Apps → AssignMate → Notifications to switch them back on.'
+                  : "Notifications are blocked in your browser. Open site settings and allow them to enable reminders."}
               </p>
               <span className="inline-block text-xs bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 px-2.5 py-1 rounded-full font-bold">
-                {isAndroid ? '⚡ Blocked in app settings' : '⚡ Blocked by browser'}
+                {isAndroid ? '⚡ Blocked in system settings' : '⚡ Blocked by browser'}
               </span>
             </div>
           ) : permState === 'default' ? (
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-3 leading-relaxed">
-                Get notified when assignments are overdue or due soon.
+                Stay on top of deadlines and individual tasks without having to check the app constantly.
               </p>
               <Button
                 onClick={handleRequestPermission}
                 fullWidth
                 variant={notifRequesting ? 'secondary' : 'primary'}
               >
-                {notifRequesting ? 'Requesting…' : '🔔 Enable Notifications'}
+                {notifRequesting ? 'Just a moment…' : '🔔 Turn on Reminders'}
               </Button>
             </div>
           ) : (
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-                You'll be notified for overdue, due today, and due within 3 days.
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-3 leading-relaxed">
+                You'll hear from us 3 days out, the day before, on the day itself, and the day after — for both assignments and individual tasks.
               </p>
+
+              {/* Toggle */}
               <div className="flex items-center justify-between py-1">
-                <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">Reminders enabled</span>
+                <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">Reminders on</span>
                 <button
                   onClick={() => handleToggleNotifications(!settings.notificationsEnabled)}
                   className={`relative inline-flex rounded-full transition-colors duration-200 focus:outline-none ${
@@ -305,18 +314,44 @@ export default function Settings() {
                   />
                 </button>
               </div>
+
+              {/* Time picker */}
+              <div className="flex items-center justify-between py-1.5 border-t border-gray-50 dark:border-gray-700 mt-2">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Remind me at</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Steps in 15-minute slots</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => adjustNotificationTime(-1)}
+                    className="w-8 h-8 rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold flex items-center justify-center hover:bg-violet-100 dark:hover:bg-violet-900/40 hover:text-violet-600 transition-colors text-lg leading-none"
+                  >
+                    −
+                  </button>
+                  <span className="w-20 text-center text-sm font-black text-gray-900 dark:text-white tabular-nums">
+                    {reminderTime}
+                  </span>
+                  <button
+                    onClick={() => adjustNotificationTime(1)}
+                    className="w-8 h-8 rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold flex items-center justify-center hover:bg-violet-100 dark:hover:bg-violet-900/40 hover:text-violet-600 transition-colors text-lg leading-none"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
               <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
-                Fires at 9 am — 3 days before, 1 day before, day of, and day after due.
+                Your reminders will arrive at {reminderTime} each day — for deadlines and any tasks due that day.
               </p>
-              {/* Android 12 exact-alarm warning */}
+
               {isAndroid && !exactAlarmOk && (
                 <div className="mt-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl p-3">
                   <p className="text-xs font-bold text-amber-700 dark:text-amber-400 mb-1">
-                    ⚠️ Exact alarms not enabled
+                    ⚠️ Precise timing isn't enabled
                   </p>
                   <p className="text-xs text-amber-600 dark:text-amber-500 leading-relaxed">
                     Go to <strong>Settings → Apps → AssignMate → Alarms &amp; Reminders</strong> and
-                    turn it on so notifications fire at the exact scheduled time.
+                    switch it on so your reminders arrive exactly when you set them.
                   </p>
                 </div>
               )}
@@ -325,14 +360,14 @@ export default function Settings() {
         </SettingsSection>
 
         {/* ── How to use ─────────────────────────────────────── */}
-        <SettingsSection icon="💡" iconBg="bg-amber-100 dark:bg-amber-900/30" title="How to use">
+        <SettingsSection icon="💡" iconBg="bg-amber-100 dark:bg-amber-900/30" title="Quick guide">
           <div className="space-y-3">
             {[
-              ['📥', 'Import outline', 'Upload your subject PDF — AI extracts all assignments instantly'],
-              ['✨', 'AI Analysis', 'Open any assignment → tap "Analyse with AI" for a study plan'],
-              ['⏱️', 'Study Timer', 'Use the timer icon in any assignment to log study time'],
-              ['✅', 'Track tasks', 'Check off tasks to automatically update your progress'],
-              ['📊', 'Stats', 'See your streak, subject breakdown, and logged study time'],
+              ['📥', 'Import an outline', 'Drop in your subject PDF and we\'ll pull out every assignment automatically'],
+              ['✨', 'Get a study plan', 'Open any assignment and tap "Analyse" — AI will break it into daily tasks for you'],
+              ['⏱️', 'Log study time', 'Hit the timer inside any assignment to track how long you\'ve spent on it'],
+              ['✅', 'Tick off tasks', 'Check tasks off as you go and watch your progress climb'],
+              ['📊', 'See your progress', 'Head to Stats for streaks, time logged, and a subject breakdown'],
             ].map(([icon, step, desc]) => (
               <div key={step} className="flex gap-3 items-start">
                 <span className="text-base mt-0.5">{icon}</span>
@@ -346,12 +381,11 @@ export default function Settings() {
         </SettingsSection>
 
         {/* ── Data Management ────────────────────────────────── */}
-        <SettingsSection icon="🗃️" iconBg="bg-red-100 dark:bg-red-900/30" title="Data Management">
+        <SettingsSection icon="🗃️" iconBg="bg-red-100 dark:bg-red-900/30" title="Your data">
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-            {isAndroid ? 'All data is stored locally on your device.' : 'All data is stored locally in your browser.'}
+            Everything stays {isAndroid ? 'on your device' : 'in your browser'} — nothing is uploaded anywhere.
           </p>
 
-          {/* Calendar export */}
           <Button
             fullWidth
             onClick={handleExportCalendar}
@@ -359,23 +393,21 @@ export default function Settings() {
             className="mb-2 flex items-center gap-2 justify-center"
           >
             <DownloadIcon className="w-4 h-4" />
-            Export to Calendar (.ics)
+            Add to Calendar
           </Button>
           <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 text-center">
-            Import into Google Calendar, Apple Calendar, or Outlook
+            Opens in Google Calendar, Apple Calendar, or Outlook
           </p>
 
-          {/* JSON backup */}
           <Button
             fullWidth
             onClick={handleExportBackup}
             variant="secondary"
             className="mb-2 flex items-center gap-2 justify-center"
           >
-            💾 Download Backup (.json)
+            💾 Save a backup
           </Button>
 
-          {/* JSON restore */}
           <input
             ref={backupFileRef}
             type="file"
@@ -389,39 +421,45 @@ export default function Settings() {
             variant="secondary"
             className="mb-4 flex items-center gap-2 justify-center"
           >
-            📤 Restore from Backup
+            📤 Restore from backup
           </Button>
           <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 text-center">
-            Backup includes all assignments, tasks, and settings.
+            Includes all your assignments, tasks, and settings.
           </p>
 
-          {/* Danger */}
           <Button variant="danger" fullWidth onClick={() => setShowClearDialog(true)}>
-            Clear All Data
+            Clear everything
           </Button>
         </SettingsSection>
 
         {/* ── About ──────────────────────────────────────────── */}
         <SettingsSection icon="ℹ️" iconBg="bg-gray-100 dark:bg-gray-700/50" title="About">
           <div className="space-y-1.5">
-            <InfoRow label="App"      value="AssignMate" />
-            <InfoRow label="Version"  value="2.2.0" />
-            <InfoRow label="AI"       value="Groq · Llama 3.3 70B (server-side)" />
-            <InfoRow label="Storage"  value={isAndroid ? 'Device (LocalStorage)' : 'Browser LocalStorage'} />
+            <InfoRow label="App"     value="AssignMate" />
+            <InfoRow label="Version" value="2.2.0" />
           </div>
         </SettingsSection>
       </div>
 
       <ConfirmDialog
         isOpen={showClearDialog}
-        title="Clear all data?"
-        message="This will permanently delete all your assignments and tasks. This action cannot be undone."
-        confirmLabel="Clear All"
+        title="Clear everything?"
+        message="This will permanently delete all your assignments and tasks. There's no undo."
+        confirmLabel="Yes, clear it all"
         onConfirm={handleClearAll}
         onCancel={() => setShowClearDialog(false)}
       />
     </div>
   );
+}
+
+/* ── Helpers ────────────────────────────────────────────────────── */
+
+function formatTime(h: number, m: number): string {
+  const hour = h % 12 || 12;
+  const ampm = h < 12 ? 'AM' : 'PM';
+  const mins = m.toString().padStart(2, '0');
+  return `${hour}:${mins} ${ampm}`;
 }
 
 /* ── Sub-components ─────────────────────────────────────────────── */

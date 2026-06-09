@@ -1,23 +1,22 @@
-import type { Assignment } from '../types';
+import type { Assignment, Task } from '../types';
 import { getDaysUntilDue, formatDueDate, isAndroid } from '../utils';
 import { parseISO, addDays, setHours, setMinutes, setSeconds, isFuture } from 'date-fns';
 
 /*
- * ─────────────────────────────────────────────────────────────────────────────
  * Notifications — platform-aware
  *
- * On web / PWA  : uses the Web Notifications API.  Fires immediately when the
- *   app is open; one per assignment per day (throttled via localStorage).
+ * Web/PWA  : fires immediately when the app is open, once per key per day.
+ * Android  : schedules real system notifications that fire even when the app
+ *            is closed — at the user's chosen reminder time each day.
  *
- * On Android (Capacitor build, MODE === 'android'):
- *   Uses @capacitor/local-notifications to schedule REAL system notifications
- *   that appear at 09:00 on the relevant days even when the app is closed.
- *   Four triggers per assignment: 3 days before · 1 day before · day of · overdue.
- * ─────────────────────────────────────────────────────────────────────────────
+ * Two layers of reminders:
+ *   Assignment-level  — 3 days before · 1 day before · day of · overdue
+ *   Task-level        — day before task due · day task is due
+ *   Daily digest      — a morning nudge summarising pending work this week
  */
 
-const NOTIFIED_KEY     = 'am_notified';           // web: { [key]: "YYYY-MM-DD" }
-const ANDROID_PERM_KEY = 'am_android_notif_perm'; // Android: cached permission state
+const NOTIFIED_KEY     = 'am_notified';
+const ANDROID_PERM_KEY = 'am_android_notif_perm';
 const CHANNEL_ID       = 'assignmate-deadlines';
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
@@ -35,7 +34,6 @@ function saveNotified(map: Record<string, string>): void {
   localStorage.setItem(NOTIFIED_KEY, JSON.stringify(map));
 }
 
-/** Stable integer ID derived from a string, safe for Android int32 range. */
 function stableId(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
@@ -44,19 +42,15 @@ function stableId(s: string): number {
 
 /* ── Android channel setup ───────────────────────────────────────────────── */
 
-/**
- * Create the Android notification channel.
- * Call once on app launch (idempotent — safe to call every time).
- */
 export async function setupAndroidNotificationChannel(): Promise<void> {
   if (!isAndroid) return;
   const { LocalNotifications } = await import('@capacitor/local-notifications');
   await LocalNotifications.createChannel({
     id:          CHANNEL_ID,
-    name:        'Assignment Deadlines',
-    description: 'Reminders for upcoming and overdue assignments',
-    importance:  4,  // IMPORTANCE_HIGH
-    visibility:  1,  // VISIBILITY_PUBLIC
+    name:        'Assignment Reminders',
+    description: 'Keeps you on top of deadlines and daily tasks',
+    importance:  4,
+    visibility:  1,
     vibration:   true,
     sound:       'default',
   });
@@ -64,11 +58,6 @@ export async function setupAndroidNotificationChannel(): Promise<void> {
 
 /* ── Android permission ──────────────────────────────────────────────────── */
 
-/**
- * Read the cached Android permission state (synchronous).
- * Refresh the cache with refreshAndroidPermission() when the Settings screen
- * opens so we pick up changes made in system settings.
- */
 export function getNotificationPermission(): NotificationPermission {
   if (isAndroid) {
     return (localStorage.getItem(ANDROID_PERM_KEY) as NotificationPermission) ?? 'default';
@@ -77,10 +66,6 @@ export function getNotificationPermission(): NotificationPermission {
   return Notification.permission;
 }
 
-/**
- * Async: read the actual system permission and refresh the cache.
- * Call on Settings screen mount and after requesting permission.
- */
 export async function refreshAndroidPermission(): Promise<NotificationPermission> {
   if (!isAndroid) return getNotificationPermission();
   const { LocalNotifications } = await import('@capacitor/local-notifications');
@@ -107,10 +92,14 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 
 /* ── Android: schedule native system notifications ───────────────────────── */
 
-async function scheduleAndroidNotifications(assignments: Assignment[]): Promise<void> {
+async function scheduleAndroidNotifications(
+  assignments: Assignment[],
+  tasks: Task[],
+  hour: number = 9,
+  minute: number = 0,
+): Promise<void> {
   const { LocalNotifications } = await import('@capacitor/local-notifications');
 
-  // Clear stale scheduled notifications before rebuilding
   const { notifications: pending } = await LocalNotifications.getPending();
   if (pending.length) {
     await LocalNotifications.cancel({ notifications: pending });
@@ -119,49 +108,62 @@ async function scheduleAndroidNotifications(assignments: Assignment[]): Promise<
   type NotifSchema = Parameters<typeof LocalNotifications.schedule>[0]['notifications'][number];
   const toSchedule: NotifSchema[] = [];
 
+  const schedule = (id: string, offset: number, due: Date, title: string, body: string, extra: Record<string, string>) => {
+    const fireAt = setSeconds(setMinutes(setHours(addDays(due, offset), hour), minute), 0);
+    if (!isFuture(fireAt)) return;
+    toSchedule.push({
+      id:        stableId(id),
+      title,
+      body,
+      schedule:  { at: fireAt },
+      channelId: CHANNEL_ID,
+      smallIcon: 'ic_stat_notification',
+      extra,
+    });
+  };
+
+  /* ── Assignment-level notifications ─────── */
   for (const a of assignments) {
     if (a.progress >= 100) continue;
-
     const due = parseISO(a.dueDate);
 
-    // Four timed triggers per assignment — all fire at 09:00 on the relevant day
-    const triggers: Array<{ offset: number; title: string; body: string }> = [
-      {
-        offset: -3,
-        title: `📌 Due in 3 days: ${a.title}`,
-        body:  `${a.subject} — due ${formatDueDate(a.dueDate)}. ${a.progress}% done.`,
-      },
-      {
-        offset: -1,
-        title: `📅 Due tomorrow: ${a.title}`,
-        body:  `${a.subject} is due tomorrow. ${a.progress}% done — get started!`,
-      },
-      {
-        offset: 0,
-        title: `📚 Due today: ${a.title}`,
-        body:  `${a.subject} is due today! ${a.progress}% done — keep going!`,
-      },
-      {
-        offset: 1,
-        title: `⚠️ Overdue: ${a.title}`,
-        body:  `${a.subject} was due ${formatDueDate(a.dueDate)}. Submit ASAP!`,
-      },
-    ];
+    schedule(`${a.id}:-3`, -3, due,
+      `📌 ${a.title} is due in 3 days`,
+      `${a.subject} — due ${formatDueDate(a.dueDate)}. You're ${a.progress}% there.`,
+      { assignmentId: a.id });
 
-    for (const t of triggers) {
-      const fireAt = setSeconds(setMinutes(setHours(addDays(due, t.offset), 9), 0), 0);
-      if (!isFuture(fireAt)) continue;
+    schedule(`${a.id}:-1`, -1, due,
+      `📅 ${a.title} is due tomorrow`,
+      `${a.subject} — ${a.progress}% done. One more push!`,
+      { assignmentId: a.id });
 
-      toSchedule.push({
-        id:        stableId(`${a.id}:${t.offset}`),
-        title:     t.title,
-        body:      t.body,
-        schedule:  { at: fireAt },
-        channelId: CHANNEL_ID,
-        smallIcon: 'ic_stat_notification',
-        extra:     { assignmentId: a.id },
-      });
-    }
+    schedule(`${a.id}:0`, 0, due,
+      `📚 ${a.title} is due today`,
+      `${a.subject} — ${a.progress}% done. You've got this!`,
+      { assignmentId: a.id });
+
+    schedule(`${a.id}:1`, 1, due,
+      `⚠️ ${a.title} is overdue`,
+      `${a.subject} was due ${formatDueDate(a.dueDate)}. Get it submitted ASAP.`,
+      { assignmentId: a.id });
+  }
+
+  /* ── Task-level notifications ───────────── */
+  for (const t of tasks) {
+    if (t.completed || !t.dueDate) continue;
+    const a = assignments.find(x => x.id === t.assignmentId);
+    if (!a || a.progress >= 100) continue;
+    const due = parseISO(t.dueDate);
+
+    schedule(`task:${t.id}:-1`, -1, due,
+      `📋 Do this tomorrow: ${t.title}`,
+      `Part of "${a.title}" · ${a.subject}`,
+      { taskId: t.id, assignmentId: a.id });
+
+    schedule(`task:${t.id}:0`, 0, due,
+      `✅ Task due today: ${t.title}`,
+      `For "${a.title}" — knock it out!`,
+      { taskId: t.id, assignmentId: a.id });
   }
 
   if (toSchedule.length > 0) {
@@ -171,7 +173,7 @@ async function scheduleAndroidNotifications(assignments: Assignment[]): Promise<
 
 /* ── Web: fire immediate notifications ───────────────────────────────────── */
 
-function fireWebNotifications(assignments: Assignment[]): void {
+function fireWebNotifications(assignments: Assignment[], tasks: Task[]): void {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
 
   const today    = todayDate();
@@ -185,48 +187,88 @@ function fireWebNotifications(assignments: Assignment[]): void {
     changed = true;
   };
 
+  /* Assignment-level */
   for (const a of assignments) {
     if (a.progress >= 100) continue;
     const days = getDaysUntilDue(a.dueDate);
 
     if (days < 0) {
       fire(`overdue-${a.id}`,
-        `⚠️ Overdue: ${a.title}`,
-        `${a.subject} was due on ${formatDueDate(a.dueDate)}. ${a.progress}% complete.`);
+        `⚠️ Still overdue: ${a.title}`,
+        `${a.subject} was due on ${formatDueDate(a.dueDate)}. ${a.progress}% done — let's get it submitted.`);
     } else if (days === 0) {
       fire(`today-${a.id}`,
         `📚 Due today: ${a.title}`,
-        `${a.subject} is due today! ${a.progress}% complete — keep going!`);
+        `${a.subject} is due today! ${a.progress}% done — you've got this!`);
     } else if (days === 1) {
       fire(`tomorrow-${a.id}`,
         `📅 Due tomorrow: ${a.title}`,
-        `${a.subject} is due tomorrow. ${a.progress}% complete.`);
+        `${a.subject} is due tomorrow. ${a.progress}% done — almost there!`);
     } else if (days <= 3) {
       fire(`soon-${a.id}-${a.dueDate}`,
         `📌 Coming up in ${days} days: ${a.title}`,
-        `${a.subject} is due on ${formatDueDate(a.dueDate)}. ${a.progress}% complete.`);
+        `${a.subject} is due on ${formatDueDate(a.dueDate)}. ${a.progress}% done.`);
     }
+  }
+
+  /* Task-level */
+  for (const t of tasks) {
+    if (t.completed) continue;
+    const a = assignments.find(x => x.id === t.assignmentId);
+    if (!a || a.progress >= 100 || !t.dueDate) continue;
+    const days = getDaysUntilDue(t.dueDate);
+
+    if (days < 0) {
+      fire(`task-overdue-${t.id}`,
+        `⚠️ Overdue task: ${t.title}`,
+        `For "${a.title}" · ${a.subject}`);
+    } else if (days === 0) {
+      fire(`task-today-${t.id}`,
+        `✅ Do this today: ${t.title}`,
+        `Part of "${a.title}" — knock it out!`);
+    } else if (days === 1) {
+      fire(`task-tomorrow-${t.id}`,
+        `📋 Tomorrow: ${t.title}`,
+        `For "${a.title}" · ${a.subject}`);
+    }
+  }
+
+  /* Daily digest — pending tasks across assignments due this week */
+  const pendingThisWeek = tasks.filter(t => {
+    if (t.completed) return false;
+    const a = assignments.find(x => x.id === t.assignmentId);
+    if (!a || a.progress >= 100) return false;
+    const d = getDaysUntilDue(a.dueDate);
+    return d >= 0 && d <= 7;
+  });
+  if (pendingThisWeek.length > 0) {
+    fire('daily-digest',
+      `📝 ${pendingThisWeek.length} task${pendingThisWeek.length !== 1 ? 's' : ''} to work through this week`,
+      `Stay on top of it — open AssignMate to see what needs doing.`);
   }
 
   if (changed) saveNotified(notified);
 }
 
-/* ── Android: cancel notifications for a single assignment ──────────────── */
+/* ── Cancel notifications for one assignment (+ its tasks) ──────────────── */
 
-/**
- * Cancel all pending notifications for one assignment.
- * Call this when an assignment is completed (progress === 100) or deleted.
- * Safe to call even if no notifications exist for that assignment.
- */
 export async function cancelNotificationsForAssignment(assignmentId: string): Promise<void> {
   if (!isAndroid) return;
   const { LocalNotifications } = await import('@capacitor/local-notifications');
   const { notifications: pending } = await LocalNotifications.getPending();
 
-  // Find IDs that belong to this assignment by re-computing the stable IDs
-  const offsets = [-3, -1, 0, 1];
-  const ids = offsets.map((o) => ({ id: stableId(`${assignmentId}:${o}`) }));
-  const toCancel = ids.filter((n) => pending.some((p) => p.id === n.id));
+  const assignIds = [-3, -1, 0, 1].map(o => ({ id: stableId(`${assignmentId}:${o}`) }));
+
+  const taskIds: { id: number }[] = [];
+  try {
+    const raw = localStorage.getItem('am_tasks');
+    const all = raw ? (JSON.parse(raw) as Array<{ id: string; assignmentId: string }>) : [];
+    for (const t of all.filter(t => t.assignmentId === assignmentId)) {
+      for (const o of [-1, 0]) taskIds.push({ id: stableId(`task:${t.id}:${o}`) });
+    }
+  } catch { /* non-critical */ }
+
+  const toCancel = [...assignIds, ...taskIds].filter(n => pending.some(p => p.id === n.id));
   if (toCancel.length) {
     await LocalNotifications.cancel({ notifications: toCancel });
   }
@@ -234,57 +276,44 @@ export async function cancelNotificationsForAssignment(assignmentId: string): Pr
 
 /* ── Android: check whether exact alarms are permitted ──────────────────── */
 
-/**
- * Returns true if the app can schedule exact alarms.
- * On Android 12 (API 31–32) the user must grant "Alarms & Reminders"
- * in Special App Access — this check lets us warn them if they haven't.
- * On Android 13+ (USE_EXACT_ALARM) this always returns true.
- */
 export async function canScheduleExactAlarms(): Promise<boolean> {
   if (!isAndroid) return true;
   try {
     const { LocalNotifications } = await import('@capacitor/local-notifications');
-    // checkExactNotificationSchedulePermission was added in @capacitor/local-notifications 5.x
     if (typeof (LocalNotifications as unknown as { checkExactNotificationSchedulePermission?: () => Promise<{exact: string}> }).checkExactNotificationSchedulePermission === 'function') {
       const { exact } = await (LocalNotifications as unknown as { checkExactNotificationSchedulePermission: () => Promise<{exact: string}> }).checkExactNotificationSchedulePermission();
       return exact === 'granted';
     }
   } catch { /* not supported on this Capacitor version */ }
-  return true; // assume ok if API unavailable
+  return true;
 }
 
 /* ── Public entry point ──────────────────────────────────────────────────── */
 
-/**
- * Fire (web) or schedule (Android) notifications for all active assignments.
- *
- * Call this:
- *   • On app launch                          → already done in App.tsx
- *   • When notifications are enabled/toggled → already done in Settings.tsx
- *   • After adding / editing an assignment   → AssignmentForm.tsx
- *   • After bulk-importing assignments       → ImportOutline.tsx
- *   • After deleting an assignment           → AssignmentDetail.tsx (via cancelNotificationsForAssignment)
- *   • When an assignment reaches 100%        → AssignmentDetail.tsx (via cancelNotificationsForAssignment)
- */
-export function checkAndNotify(assignments: Assignment[], enabled: boolean): void {
+export function checkAndNotify(
+  assignments: Assignment[],
+  tasks: Task[],
+  enabled: boolean,
+  hour: number = 9,
+  minute: number = 0,
+): void {
   if (!enabled) return;
   if (isAndroid) {
     if (getNotificationPermission() !== 'granted') return;
-    scheduleAndroidNotifications(assignments).catch(console.error);
+    scheduleAndroidNotifications(assignments, tasks, hour, minute).catch(console.error);
   } else {
-    fireWebNotifications(assignments);
+    fireWebNotifications(assignments, tasks);
   }
 }
 
-/**
- * Convenience wrapper: read current settings and reschedule everything.
- * Use this in screens that mutate assignments but don't have settings in scope.
- */
 export function rescheduleAll(assignments: Assignment[]): void {
   try {
-    // Dynamically read the latest settings without importing the store at module level
-    const raw = localStorage.getItem('am_settings');
-    const settings = raw ? (JSON.parse(raw) as { notificationsEnabled?: boolean }) : {};
-    checkAndNotify(assignments, settings.notificationsEnabled ?? false);
+    const rawSettings = localStorage.getItem('am_settings');
+    const s = rawSettings
+      ? (JSON.parse(rawSettings) as { notificationsEnabled?: boolean; notificationHour?: number; notificationMinute?: number })
+      : {};
+    const rawTasks = localStorage.getItem('am_tasks');
+    const tasks = rawTasks ? (JSON.parse(rawTasks) as Task[]) : [];
+    checkAndNotify(assignments, tasks, s.notificationsEnabled ?? false, s.notificationHour ?? 9, s.notificationMinute ?? 0);
   } catch { /* non-critical */ }
 }

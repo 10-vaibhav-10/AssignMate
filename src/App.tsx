@@ -183,8 +183,9 @@ export default function App() {
     setupAndroidNotificationChannel().catch(console.error);
 
     const { assignments } = useAssignmentStore.getState();
+    const { tasks }       = useTaskStore.getState();
     const { settings }    = useSettingsStore.getState();
-    checkAndNotify(assignments, settings.notificationsEnabled);
+    checkAndNotify(assignments, tasks, settings.notificationsEnabled, settings.notificationHour ?? 9, settings.notificationMinute ?? 0);
   }, []);
 
   return (

@@ -506,7 +506,7 @@ function PressureMeter({ assignments }: { assignments: Assignment[] }) {
           </div>
           {showCritLine && (
             <p className="text-[9px] text-red-400 mt-1">
-              — Red dashed line = critical threshold (80)
+              Red dashed line marks the critical threshold (80)
             </p>
           )}
         </div>
@@ -707,7 +707,7 @@ function GradeCalculator({ assignments }: { assignments: Assignment[] }) {
                           : 'text-red-500 dark:text-red-400'
                           : 'text-gray-300 dark:text-gray-600'
                       }`}>
-                        {a.grade !== undefined ? `${a.grade}%` : '—'}
+                        {a.grade !== undefined ? `${a.grade}%` : 'TBD'}
                       </span>
                     </div>
                   ))}

@@ -10,6 +10,41 @@ import { PlusIcon, FlameIcon, DocumentArrowUpIcon } from '../components/Icons';
 import { toast } from '../stores/toastStore';
 import type { Difficulty } from '../types';
 
+/* ── Daily quotes (date-seeded so they change each day) ────────── */
+const QUOTES: { text: string; author: string }[] = [
+  { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
+  { text: "Small daily improvements over time lead to stunning results.", author: "Robin Sharma" },
+  { text: "You don't have to be great to start, but you have to start to be great.", author: "Zig Ziglar" },
+  { text: "Success is the sum of small efforts, repeated day in and day out.", author: "Robert Collier" },
+  { text: "The expert in anything was once a beginner.", author: "Helen Hayes" },
+  { text: "It always seems impossible until it's done.", author: "Nelson Mandela" },
+  { text: "Don't watch the clock; do what it does keep going.", author: "Sam Levenson" },
+  { text: "Learning is not attained by chance; it must be sought with ardour.", author: "Abigail Adams" },
+  { text: "Motivation is what gets you started. Habit is what keeps you going.", author: "Jim Ryun" },
+  { text: "The more that you read, the more things you will know.", author: "Dr. Seuss" },
+  { text: "Education is the most powerful weapon you can use to change the world.", author: "Nelson Mandela" },
+  { text: "An investment in knowledge pays the best interest.", author: "Benjamin Franklin" },
+  { text: "The beautiful thing about learning is that no one can take it away from you.", author: "B.B. King" },
+  { text: "Study hard what interests you the most in the most undisciplined way.", author: "Richard Feynman" },
+  { text: "There are no shortcuts to any place worth going.", author: "Beverly Sills" },
+  { text: "Perseverance is not a long race; it is many short races one after another.", author: "Walter Elliott" },
+  { text: "The difference between ordinary and extraordinary is that little extra.", author: "Jimmy Johnson" },
+  { text: "Quality is not an act, it is a habit.", author: "Aristotle" },
+  { text: "Hard work beats talent when talent doesn't work hard.", author: "Tim Notke" },
+  { text: "Believe you can and you're halfway there.", author: "Theodore Roosevelt" },
+  { text: "Start where you are. Use what you have. Do what you can.", author: "Arthur Ashe" },
+  { text: "The capacity to learn is a gift; the ability to learn is a skill.", author: "Brian Herbert" },
+  { text: "Push yourself, because no one else is going to do it for you.", author: "Unknown" },
+  { text: "Great things never come from comfort zones.", author: "Unknown" },
+  { text: "Dream it. Wish it. Do it.", author: "Unknown" },
+];
+
+function getDailyQuote() {
+  const start = new Date(new Date().getFullYear(), 0, 0).getTime();
+  const dayOfYear = Math.floor((Date.now() - start) / 86_400_000);
+  return QUOTES[dayOfYear % QUOTES.length];
+}
+
 /* ── Subject → gradient mapping (hash-stable) ─────────────────── */
 const GRADIENTS = [
   'from-violet-600 to-purple-700',
@@ -350,36 +385,47 @@ export default function Home() {
 
         {/* ── Empty state ───────────────────────────────────────────── */}
         {assignments.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-10 text-center">
-            <div
-              className="w-24 h-24 rounded-3xl flex items-center justify-center mb-5 shadow-xl shadow-violet-400/25"
-              style={{ background: 'linear-gradient(145deg, #7c3aed, #a855f7, #d946ef)' }}
-            >
-              <span className="text-4xl">🎯</span>
-            </div>
-            <h3 className="text-gray-900 dark:text-white font-black text-xl mb-2">
-              Study smarter, not harder
-            </h3>
-            <p className="text-gray-500 dark:text-gray-400 text-sm mb-7 max-w-xs leading-relaxed">
-              Add an assignment and let AI build a personalised study plan for you.
-            </p>
-            <div className="flex flex-col gap-3 w-full max-w-xs">
-              <button
-                onClick={() => navigate('/assignments/import')}
-                className="flex items-center justify-center gap-2 py-3.5 rounded-2xl font-black text-sm text-white shadow-lg shadow-violet-400/30 transition-all active:scale-95"
-                style={{ background: 'linear-gradient(135deg, #7c3aed, #a855f7, #d946ef)' }}
+          <div className="flex flex-col gap-4">
+            {/* Daily quote */}
+            <DailyQuoteCard />
+
+            {/* Icon + CTA */}
+            <div className="flex flex-col items-center justify-center py-6 text-center">
+              <div
+                className="w-20 h-20 rounded-3xl flex items-center justify-center mb-4 shadow-xl shadow-violet-400/25"
+                style={{ background: 'linear-gradient(145deg, #7c3aed, #a855f7, #d946ef)' }}
               >
-                <DocumentArrowUpIcon className="w-4 h-4" />
-                Import Subject Outline
-              </button>
-              <button
-                onClick={() => navigate('/assignments/new')}
-                className="flex items-center justify-center gap-2 py-3.5 rounded-2xl font-black text-sm text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-950/60 transition-all active:scale-95"
-              >
-                <PlusIcon className="w-4 h-4" />
-                Add Manually
-              </button>
+                <span className="text-3xl">🎯</span>
+              </div>
+              <h3 className="text-gray-900 dark:text-white font-black text-xl mb-2">
+                Study smarter, not harder
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400 text-sm mb-6 max-w-xs leading-relaxed">
+                Add an assignment and let AI build a personalised study plan for you.
+              </p>
+              <div className="flex flex-col gap-3 w-full max-w-xs">
+                <button
+                  onClick={() => navigate('/assignments/import')}
+                  className="flex items-center justify-center gap-2 py-3.5 rounded-2xl font-black text-sm text-white shadow-lg shadow-violet-400/30 transition-all active:scale-95"
+                  style={{ background: 'linear-gradient(135deg, #7c3aed, #a855f7, #d946ef)' }}
+                >
+                  <DocumentArrowUpIcon className="w-4 h-4" />
+                  Import Subject Outline
+                </button>
+                <button
+                  onClick={() => navigate('/assignments/new')}
+                  className="flex items-center justify-center gap-2 py-3.5 rounded-2xl font-black text-sm text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-950/60 transition-all active:scale-95"
+                >
+                  <PlusIcon className="w-4 h-4" />
+                  Add Manually
+                </button>
+              </div>
             </div>
+
+            {/* Streak nudge (only when streak banner isn't already showing) */}
+            {streakData.currentStreak < 2 && (
+              <StreakNudgeCard streak={streakData.currentStreak} />
+            )}
           </div>
         )}
       </div>
@@ -443,6 +489,60 @@ function SectionHeader({
         {icon}
       </div>
       <h2 className={`font-black text-xs tracking-widest ${textCls}`}>{label}</h2>
+    </div>
+  );
+}
+
+function DailyQuoteCard() {
+  const { text, author } = getDailyQuote();
+  return (
+    <div className="rounded-3xl overflow-hidden bg-white dark:bg-[#111128] border border-violet-100/60 dark:border-violet-900/20 shadow-sm shadow-violet-100/40 dark:shadow-black/30">
+      <div className="px-5 py-5">
+        <p className="text-[9px] font-black tracking-widest text-violet-400 dark:text-violet-500 mb-3 uppercase">
+          Quote of the Day
+        </p>
+        <p
+          className="text-5xl font-black leading-none mb-2 select-none"
+          style={{ color: '#7c3aed', opacity: 0.25 }}
+          aria-hidden
+        >
+          "
+        </p>
+        <p className="text-gray-800 dark:text-gray-100 font-semibold text-[14px] leading-relaxed -mt-3">
+          {text}
+        </p>
+        <p className="text-gray-400 dark:text-gray-500 text-xs font-bold mt-3"> - {author}</p>
+      </div>
+    </div>
+  );
+}
+
+function StreakNudgeCard({ streak }: { streak: number }) {
+  const isDay0 = streak === 0;
+  return (
+    <div
+      className="rounded-3xl overflow-hidden"
+      style={{
+        background: isDay0
+          ? 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)'
+          : 'linear-gradient(135deg, #7c2d12 0%, #9a3412 60%, #c2410c 100%)',
+      }}
+    >
+      <div className="px-4 py-4 flex items-center gap-3">
+        <div className="w-10 h-10 bg-white/15 rounded-2xl flex items-center justify-center shrink-0">
+          <span className="text-xl">{isDay0 ? '✨' : '🔥'}</span>
+        </div>
+        <div className="flex-1">
+          <p className="text-white font-black text-sm">
+            {isDay0 ? 'Start your streak today!' : 'Day 1 - keep the flame alive!'}
+          </p>
+          <p className="text-white/60 text-xs font-semibold mt-0.5">
+            {isDay0
+              ? 'Complete a task to kick off your first streak.'
+              : 'Complete a task tomorrow to hit day 2.'}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

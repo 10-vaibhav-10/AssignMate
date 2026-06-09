@@ -144,7 +144,7 @@ export default function StudyTimer() {
 
               /* — Every 4th session → long break — */
               if (newCount % 4 === 0) {
-                toast.success('4 sessions complete — take a long break! 🎉');
+                toast.success('4 sessions complete. Take a long break! 🎉');
                 setMode('long-break');
                 setSeconds(LONG_BREAK_MINS * 60);
               } else {
@@ -156,9 +156,9 @@ export default function StudyTimer() {
             } else {
               /* — Break ended, back to work — */
               if (modeRef.current === 'long-break') {
-                toast.info('Long break over — ready for a new set! 💪');
+                toast.info('Long break over, ready for a new set! 💪');
               } else {
-                toast.info('Break over — stay focused! 💪');
+                toast.info('Break over. Stay focused! 💪');
               }
               setMode('work');
               setSeconds(workMinsRef.current * 60);

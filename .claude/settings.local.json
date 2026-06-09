@@ -2,7 +2,17 @@
   "permissions": {
     "allow": [
       "PowerShell(flutter --version 2>&1)",
-      "PowerShell(dart --version 2>&1)"
+      "PowerShell(dart --version 2>&1)",
+      "Bash(claude mcp *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "WebFetch(domain:project-kxoup.vercel.app)",
+      "mcp__Claude_in_Chrome__navigate",
+      "mcp__Claude_in_Chrome__computer",
+      "mcp__Claude_in_Chrome__browser_batch",
+      "Bash(Get-ChildItem -Path \"C:\\\\Project\\\\AssignMate\" -Force)",
+      "Bash(Select-Object Name, Mode)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npx tsc *)"
     ]
   }
 }

@@ -550,7 +550,7 @@ function PressureMeter({ assignments }: { assignments: Assignment[] }) {
 
         {!hasActiveWork && (
           <p className="text-sm text-center text-gray-400 dark:text-gray-500 py-3">
-            No active assignments — enjoy the break! 🎉
+            No active assignments.  Enjoy the break! 🎉
           </p>
         )}
       </div>
@@ -666,9 +666,9 @@ function GradeCalculator({ assignments }: { assignments: Assignment[] }) {
               needed === null && completedWeight >= 95 ?
                 (earnedScore / completedWeight * 100) >= target
                   ? `🎉 You've achieved ${GRADE_TARGETS[targetIdx].short}!`
-                  : `⚠️ Below ${GRADE_TARGETS[targetIdx].short} — contact your lecturer`
+                  : `⚠️ Below ${GRADE_TARGETS[targetIdx].short} Contact your lecturer`
               : needed === null ? 'No ungraded work remaining'
-              : needed > 100    ? `Mathematically difficult — need ${needed.toFixed(0)}%`
+              : needed > 100    ? `Mathematically difficult, need ${needed.toFixed(0)}%`
               : needed <= 0     ? `🎉 Already secured ${GRADE_TARGETS[targetIdx].short}!`
               :                   `Need avg ${needed.toFixed(1)}% on remaining work`;
 

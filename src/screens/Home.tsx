@@ -75,10 +75,10 @@ export default function Home() {
 
   function getMotivation() {
     if (streakData.currentStreak >= 7) return `🔥 ${streakData.currentStreak}-day streak! Unstoppable!`;
-    if (overdueAssignments.length > 0) return "You have overdue work — let's catch up!";
-    if (dueSoon.length > 0) return 'Deadlines approaching — stay focused!';
+    if (overdueAssignments.length > 0) return "You have overdue work. Let's catch up!";
+    if (dueSoon.length > 0) return 'Deadlines approaching !!! Stay focused!';
     if (activeAssignments.length > 0) return "Let's get some work done today.";
-    return 'All clear — enjoy the break! 🎉';
+    return 'All clear. Enjoy the break! 🎉';
   }
 
   // Assignments due in 1–7 days (today shown separately; overdue shown separately)
@@ -245,7 +245,7 @@ export default function Home() {
             <div className="flex-1 min-w-0">
               <p className="text-white font-black text-sm">Deadline cluster detected!</p>
               <p className="text-white/75 text-xs font-semibold mt-0.5">
-                {clusterWarning.count} assignments due within the same week — plan ahead!
+                {clusterWarning.count} assignments due within the same week. Plan ahead!
               </p>
             </div>
             <button

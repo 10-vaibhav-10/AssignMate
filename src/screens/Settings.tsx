@@ -107,7 +107,7 @@ export default function Settings() {
       loadSettings();
       toast.success('Backup restored! Welcome back 🎉');
     } catch {
-      toast.error('That file doesn\'t look right — please use an AssignMate backup.');
+      toast.error('That file doesn\'t look right .Please use an AssignMate backup.');
     }
   }
 
@@ -291,7 +291,7 @@ export default function Settings() {
           ) : (
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-3 leading-relaxed">
-                You'll hear from us 3 days out, the day before, on the day itself, and the day after — for both assignments and individual tasks.
+                You'll hear from us 3 days out, the day before, on the day itself, and the day after for both assignments and individual tasks.
               </p>
 
               {/* Toggle */}
@@ -341,7 +341,7 @@ export default function Settings() {
               </div>
 
               <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
-                Your reminders will arrive at {reminderTime} each day — for deadlines and any tasks due that day.
+                Your reminders will arrive at {reminderTime} each day for deadlines and any tasks due that day.
               </p>
 
               {isAndroid && !exactAlarmOk && (
@@ -364,7 +364,7 @@ export default function Settings() {
           <div className="space-y-3">
             {[
               ['📥', 'Import an outline', 'Drop in your subject PDF and we\'ll pull out every assignment automatically'],
-              ['✨', 'Get a study plan', 'Open any assignment and tap "Analyse" — AI will break it into daily tasks for you'],
+              ['✨', 'Get a study plan', 'Open any assignment and tap "Analyse". AI will break it into daily tasks for you'],
               ['⏱️', 'Log study time', 'Hit the timer inside any assignment to track how long you\'ve spent on it'],
               ['✅', 'Tick off tasks', 'Check tasks off as you go and watch your progress climb'],
               ['📊', 'See your progress', 'Head to Stats for streaks, time logged, and a subject breakdown'],
@@ -383,7 +383,7 @@ export default function Settings() {
         {/* ── Data Management ────────────────────────────────── */}
         <SettingsSection icon="🗃️" iconBg="bg-red-100 dark:bg-red-900/30" title="Your data">
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-            Everything stays {isAndroid ? 'on your device' : 'in your browser'} — nothing is uploaded anywhere.
+            Everything stays {isAndroid ? 'on your device' : 'in your browser'} . nothing is uploaded anywhere.
           </p>
 
           <Button

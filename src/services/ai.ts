@@ -52,7 +52,7 @@ async function callAI(payload: GroqPayload): Promise<string> {
   } catch (err) {
     clearTimeout(timeoutId);
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('AI request timed out. Please try again — it usually works on the second attempt.');
+      throw new Error('AI request timed out. Please try again ! It usually works on the second attempt.');
     }
     throw new Error('Could not reach the AI service. Check your internet connection and try again.');
   }
@@ -222,16 +222,16 @@ function buildOutlinePrompt(text: string): string {
 
 The text below has been pre-extracted into up to three labelled sections:
 
-  SECTION A — WEEKLY PLANNER: Contains the Week 1 calendar date and, for each week row,
+  SECTION A - WEEKLY PLANNER: Contains the Week 1 calendar date and, for each week row,
     an "Expected Work" entry that states when each assessment is due (e.g. "Assessment 2:
     Quiz due", "Assignment 1 Due Sunday 11:59 pm"). Use this ONLY for dates — ignore all
     lecture topics, readings, tutorial activities, and "Summative graded" entries.
 
-  SECTION B — FORMAL ASSESSMENT TABLE (Section 2.8): The DEFINITIVE LIST of all assessed
+  SECTION B - FORMAL ASSESSMENT TABLE (Section 2.8): The DEFINITIVE LIST of all assessed
     items. Each row is one assignment. Use ONLY the rows in this table to decide which
     assessments exist. Do NOT invent assessments not listed here.
 
-  SECTION C — ASSESSMENT DETAILS (Section 3): Detailed per-assessment descriptions —
+  SECTION C - ASSESSMENT DETAILS (Section 3): Detailed per-assessment descriptions —
     word limits, deliverables, submission method. Use these for the "details" field.
 
 ━━━ SUBJECT NAME ━━━
@@ -239,18 +239,18 @@ The text below has been pre-extracted into up to three labelled sections:
 • Strip trimester codes (T126, T226, etc.) from the name.
 
 ━━━ WHICH ASSESSMENTS TO INCLUDE ━━━
-INCLUDE: Every row in SECTION B — quizzes, reports, projects, presentations, group work,
+INCLUDE: Every row in SECTION B - quizzes, reports, projects, presentations, group work,
 formative items (0% weight). Each row = one assignment object in the output.
 
-EXCLUDE: Anything NOT in Section B — weekly readings, tutorial prep, lecture activities,
+EXCLUDE: Anything NOT in Section B - weekly readings, tutorial prep, lecture activities,
 "Summative graded" sessions, "Discussion on…" entries, review questions.
 
 ━━━ CALCULATING EXACT DUE DATES ━━━
 
-Step 1 — In SECTION A, find the row for "Week 1" and read its calendar date
+Step 1 - In SECTION A, find the row for "Week 1" and read its calendar date
          (e.g. "Week 1  2 March 2026" → Week 1 starts 2 March 2026).
-Step 2 — Week N start date = Week1StartDate + (N − 1) × 7 days.
-Step 3 — Find this assessment's row in SECTION A "Expected Work" column, then apply:
+Step 2 - Week N start date = Week1StartDate + (N − 1) × 7 days.
+Step 3 - Find this assessment's row in SECTION A "Expected Work" column, then apply:
 
   Marker in Section A row                              → Due date
   ─────────────────────────────────────────────────────────────────
@@ -269,7 +269,7 @@ submission method, key deliverables. If Section C has no entry for an item,
 write a brief description inferred from Section B.
 
 ━━━ OUTPUT FORMAT ━━━
-Return ONLY valid JSON — no markdown, no code fences, nothing outside the object:
+Return ONLY valid JSON - no markdown, no code fences, nothing outside the object:
 {
   "subject": "SUBJECTCODE Full Subject Name",
   "assignments": [

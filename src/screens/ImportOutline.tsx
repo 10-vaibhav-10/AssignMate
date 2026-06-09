@@ -154,7 +154,7 @@ export default function ImportOutline() {
           </button>
           <div className="min-w-0">
             <h1 className="text-xl font-extrabold text-white">Import Subject Outline</h1>
-            <p className="text-indigo-200 text-xs mt-0.5">PDF or image — AI extracts all assignments</p>
+            <p className="text-indigo-200 text-xs mt-0.5">PDF or image. AI extracts all assignments</p>
           </div>
         </div>
       </div>
@@ -179,7 +179,7 @@ export default function ImportOutline() {
             </div>
             <div className="text-center">
               <p className="font-semibold text-gray-800 dark:text-white text-sm">Tap to upload subject outline</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">PDF  ·  JPG  ·  PNG  ·  WEBP  — all assignments extracted automatically</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">PDF  ·  JPG  ·  PNG  ·  WEBP  All assignments extracted automatically</p>
             </div>
           </button>
 
@@ -214,7 +214,7 @@ export default function ImportOutline() {
                 <span className="text-sm text-gray-600 dark:text-gray-300">{text}</span>
               </div>
             ))}
-            <p className="text-xs text-gray-400 dark:text-gray-500 pt-1">Powered by Gemini AI — no setup required.</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 pt-1">Powered by Gemini AI. No setup required.</p>
           </div>
 
           {step === 'error' && error && (
@@ -275,14 +275,14 @@ export default function ImportOutline() {
           <div>
             <p className="font-bold text-gray-800 dark:text-white text-base">Rate limit reached</p>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Retrying automatically in {countdown}s — no action needed
+              Retrying automatically in {countdown}s. no action needed
             </p>
           </div>
 
           <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-2xl p-4 text-left w-full max-w-xs space-y-2">
             <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">⚡ Why does this happen?</p>
             <p className="text-xs text-amber-600 dark:text-amber-500 leading-relaxed">
-              Groq's free tier allows 30 requests/minute per key. Your PDF triggered the limit across all keys. It resets in 60 seconds — then it retries automatically.
+              Groq's free tier allows 30 requests/minute per key. Your PDF triggered the limit across all keys. It resets in 60 seconds, then it retries automatically.
             </p>
             <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 pt-1">Want to avoid this?</p>
             <p className="text-xs text-amber-600 dark:text-amber-500 leading-relaxed">

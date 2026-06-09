@@ -305,7 +305,7 @@ export default function Assignments() {
                 <div>
                   <p className="font-black text-white text-sm">Import subject outline</p>
                   <p className="text-white/70 text-xs mt-0.5 font-semibold">
-                    Upload PDF — AI extracts all assignments
+                    Upload PDF. AI extracts all assignments
                   </p>
                 </div>
               </button>

@@ -109,7 +109,7 @@ export default function AssignmentDetail() {
       const msg = err instanceof Error ? err.message : 'Analysis failed. Please try again.';
       setAiError(msg);
       setAiStatus('error');
-      toast.error('AI analysis failed — check your API key.');
+      toast.error('AI analysis failed - check your API key.');
     }
   }
 
@@ -129,7 +129,7 @@ export default function AssignmentDetail() {
 
     /* When all tasks are done, mark 100% and cancel any pending reminders */
     if (completed === updatedTasks.length && updatedTasks.length > 0) {
-      toast.success('All tasks complete — assignment done! 🎉');
+      toast.success('All tasks complete. Assignment done! 🎉');
       cancelNotificationsForAssignment(assignment.id).catch(console.error);
     }
   }

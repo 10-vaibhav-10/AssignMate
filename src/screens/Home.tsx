@@ -294,6 +294,12 @@ export default function Home() {
       )}
 
       <div className="px-4 space-y-5 mt-4">
+        {/* ── Daily quote (always visible) ──────────────────────────── */}
+        <DailyQuoteCard />
+
+        {/* ── 7-day activity strip ──────────────────────────────────── */}
+        <ActivityStrip activityLog={streakData.activityLog} />
+
         {/* ── Overdue ──────────────────────────────────────────────── */}
         {overdueAssignments.length > 0 && (
           <section>
@@ -386,9 +392,6 @@ export default function Home() {
         {/* ── Empty state ───────────────────────────────────────────── */}
         {assignments.length === 0 && (
           <div className="flex flex-col gap-4">
-            {/* Daily quote */}
-            <DailyQuoteCard />
-
             {/* Icon + CTA */}
             <div className="flex flex-col items-center justify-center py-6 text-center">
               <div
@@ -428,6 +431,7 @@ export default function Home() {
             )}
           </div>
         )}
+
       </div>
     </div>
   );
@@ -493,6 +497,52 @@ function SectionHeader({
   );
 }
 
+function ActivityStrip({ activityLog }: { activityLog: Record<string, number> }) {
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const dateStr = d.toISOString().slice(0, 10);
+    const label = d.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2);
+    const isToday = i === 6;
+    const count = activityLog[dateStr] ?? 0;
+    return { dateStr, label, isToday, active: count > 0, count };
+  });
+
+  return (
+    <div className="bg-white dark:bg-[#111128] rounded-3xl border border-violet-100/60 dark:border-violet-900/20 px-5 py-4 shadow-sm shadow-violet-100/40 dark:shadow-black/30">
+      <p className="text-[9px] font-black tracking-widest text-violet-400 dark:text-violet-500 mb-3 uppercase">
+        Last 7 Days - No of Tasks You Completed Each Day
+      </p>
+      <div className="flex gap-1.5">
+        {days.map(({ dateStr, label, isToday, active, count }) => (
+          <div key={dateStr} className="flex flex-col items-center gap-1.5 flex-1">
+            <div
+              className={`w-full h-9 rounded-xl flex items-center justify-center transition-all ${
+                isToday && active
+                  ? 'bg-gradient-to-b from-violet-500 to-fuchsia-500 shadow-md shadow-violet-400/30'
+                  : active
+                    ? 'bg-violet-100 dark:bg-violet-900/60'
+                    : isToday
+                      ? 'border-2 border-dashed border-violet-300 dark:border-violet-700'
+                      : 'bg-gray-100 dark:bg-gray-800/50'
+              }`}
+            >
+              {active && (
+                <span className={`text-[11px] font-black ${isToday ? 'text-white' : 'text-violet-500 dark:text-violet-300'}`}>
+                  {count}
+                </span>
+              )}
+            </div>
+            <span className={`text-[9px] font-black ${isToday ? 'text-violet-600 dark:text-violet-400' : 'text-gray-400 dark:text-gray-600'}`}>
+              {label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DailyQuoteCard() {
   const { text, author } = getDailyQuote();
   return (
@@ -504,9 +554,7 @@ function DailyQuoteCard() {
         <p
           className="text-5xl font-black leading-none mb-2 select-none"
           style={{ color: '#7c3aed', opacity: 0.25 }}
-          aria-hidden
-        >
-          "
+          aria-hidden>
         </p>
         <p className="text-gray-800 dark:text-gray-100 font-semibold text-[14px] leading-relaxed -mt-3">
           {text}

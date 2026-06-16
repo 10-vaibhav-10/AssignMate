@@ -215,10 +215,23 @@ function extractRelevantSections(fullText: string): string {
   return parts.join('\n\n');
 }
 
-function buildOutlinePrompt(text: string): string {
-  const extracted = extractRelevantSections(text);
+function buildWeekTable(semesterStart: string): string {
+  const base = new Date(semesterStart + 'T00:00:00');
+  const lines = [
+    'USER-PROVIDED SEMESTER WEEK REFERENCE (authoritative — use these exact Monday start dates; ignore any Week 1 date found in Section A):',
+  ];
+  for (let w = 1; w <= 16; w++) {
+    const d = new Date(base.getTime() + (w - 1) * 7 * 86_400_000);
+    lines.push(`  Week ${w} = ${d.toISOString().slice(0, 10)}`);
+  }
+  return lines.join('\n');
+}
 
-  return `Extract every formally assessed item from this university subject outline. Today is ${todayStr()}.
+function buildOutlinePrompt(text: string, semesterStart?: string): string {
+  const extracted = extractRelevantSections(text);
+  const weekRef   = semesterStart ? '\n\n' + buildWeekTable(semesterStart) : '';
+
+  return `Extract every formally assessed item from this university subject outline. Today is ${todayStr()}.${weekRef}
 
 The text below has been pre-extracted into up to three labelled sections:
 
@@ -303,6 +316,7 @@ ${extracted}`;
 
 export async function extractAssignmentsFromOutline(
   outlineText: string,
+  semesterStart?: string,
 ): Promise<OutlineParseResult> {
   const content = await callAI({
     model:           MODEL,        // 70B: better date arithmetic and section reasoning
@@ -311,7 +325,7 @@ export async function extractAssignmentsFromOutline(
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: OUTLINE_SYSTEM },
-      { role: 'user',   content: buildOutlinePrompt(outlineText) },
+      { role: 'user',   content: buildOutlinePrompt(outlineText, semesterStart) },
     ],
   });
 

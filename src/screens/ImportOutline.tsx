@@ -6,12 +6,11 @@ import { extractFromPdf, extractFromImage } from '../services/fileExtractor';
 import { extractAssignmentsFromOutline } from '../services/ai';
 import { formatDueDate } from '../utils';
 import { rescheduleAll } from '../services/notifications';
-import { DifficultyBadge } from '../components/common/Badge';
 import { Button } from '../components/common/Button';
 import { ChevronLeftIcon, DocumentArrowUpIcon, SparklesIcon, CheckIcon } from '../components/Icons';
 import type { ExtractedAssignment, Difficulty } from '../types';
 
-type Step = 'upload' | 'extracting' | 'analyzing' | 'ratelimit' | 'review' | 'error';
+type Step = 'upload' | 'extracting' | 'semester' | 'analyzing' | 'ratelimit' | 'review' | 'error';
 
 const RETRY_SECS = 65; // slightly over 60 s so the per-minute window definitely resets
 
@@ -19,17 +18,19 @@ export default function ImportOutline() {
   const navigate = useNavigate();
   const addAssignment = useAssignmentStore((s) => s.add);
 
-  const fileInputRef   = useRef<HTMLInputElement>(null);
-  const countdownRef   = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pendingTextRef = useRef<string | null>(null);  // PDF text saved for auto-retry
+  const fileInputRef    = useRef<HTMLInputElement>(null);
+  const countdownRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingTextRef  = useRef<string | null>(null);  // PDF text saved for auto-retry
+  const rawTextRef      = useRef<string | null>(null);  // text waiting for semester step
 
-  const [step,      setStep]      = useState<Step>('upload');
-  const [error,     setError]     = useState<string | null>(null);
-  const [subject,   setSubject]   = useState('');
-  const [extracted, setExtracted] = useState<ExtractedAssignment[]>([]);
-  const [selected,  setSelected]  = useState<Set<number>>(new Set());
-  const [adding,    setAdding]    = useState(false);
-  const [countdown, setCountdown] = useState(0);
+  const [step,          setStep]          = useState<Step>('upload');
+  const [error,         setError]         = useState<string | null>(null);
+  const [subject,       setSubject]       = useState('');
+  const [extracted,     setExtracted]     = useState<ExtractedAssignment[]>([]);
+  const [selected,      setSelected]      = useState<Set<number>>(new Set());
+  const [adding,        setAdding]        = useState(false);
+  const [countdown,     setCountdown]     = useState(0);
+  const [semesterStart, setSemesterStart] = useState('');
 
   /* Clean up countdown timer on unmount */
   useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
@@ -54,10 +55,10 @@ export default function ImportOutline() {
     }, 1000);
   }
 
-  async function analyzeText(text: string) {
+  async function analyzeText(text: string, semester?: string) {
     setStep('analyzing');
     try {
-      const result = await extractAssignmentsFromOutline(text);
+      const result = await extractAssignmentsFromOutline(text, semester || undefined);
       setSubject(result.subject);
       setExtracted(result.assignments);
       setSelected(new Set(result.assignments.map((_, i) => i)));
@@ -71,7 +72,7 @@ export default function ImportOutline() {
 
       if (isRateLimit) {
         pendingTextRef.current = text;
-        startCountdown(() => analyzeText(text));
+        startCountdown(() => analyzeText(text, semester));
       } else {
         setError(msg);
         setStep('error');
@@ -105,7 +106,11 @@ export default function ImportOutline() {
       return;
     }
 
-    await analyzeText(text);
+    // Pause here so user can confirm their semester start date
+    rawTextRef.current = text;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    setSemesterStart(todayIso);
+    setStep('semester');
   }
 
   function toggleSelect(i: number) {
@@ -114,6 +119,12 @@ export default function ImportOutline() {
       if (next.has(i)) next.delete(i); else next.add(i);
       return next;
     });
+  }
+
+  function updateDifficulty(index: number, difficulty: Difficulty) {
+    setExtracted((prev) =>
+      prev.map((a, i) => (i === index ? { ...a, difficulty } : a)),
+    );
   }
 
   function handleAddAll() {
@@ -227,6 +238,52 @@ export default function ImportOutline() {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Semester start ───────────────────────────────────────── */}
+      {step === 'semester' && (
+        <div className="px-4 pt-6 space-y-4">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-2xl">📅</span>
+              <div>
+                <h2 className="font-extrabold text-gray-900 dark:text-white text-base leading-tight">
+                  When does Week 1 start?
+                </h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Needed to convert "Week 12" style deadlines into exact dates.
+                </p>
+              </div>
+            </div>
+
+            <input
+              type="date"
+              value={semesterStart}
+              onChange={(e) => setSemesterStart(e.target.value)}
+              className="w-full mt-1 px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            />
+
+            <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-2">
+              This is the Monday of your first week of semester / trimester.
+            </p>
+          </div>
+
+          <Button
+            fullWidth
+            onClick={() => analyzeText(rawTextRef.current!, semesterStart)}
+            disabled={!semesterStart}
+          >
+            <SparklesIcon className="w-4 h-4" />
+            Analyse with AI
+          </Button>
+
+          <button
+            onClick={() => analyzeText(rawTextRef.current!)}
+            className="w-full text-center text-xs text-gray-400 dark:text-gray-500 underline underline-offset-2 py-1"
+          >
+            Skip — my outline has exact calendar dates
+          </button>
         </div>
       )}
 
@@ -344,8 +401,30 @@ export default function ImportOutline() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2 mb-1">
                       <p className="font-semibold text-gray-900 dark:text-white text-sm leading-snug flex-1">{a.title}</p>
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        <DifficultyBadge difficulty={a.difficulty as Difficulty} />
+                      <div className="flex flex-col items-end gap-1.5 shrink-0">
+                        {/* Difficulty picker — tap to override AI's suggestion */}
+                        <div
+                          className="flex gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {(['easy', 'medium', 'hard'] as Difficulty[]).map((d) => (
+                            <button
+                              key={d}
+                              onClick={(e) => { e.stopPropagation(); updateDifficulty(i, d); }}
+                              className={`text-[9px] font-black px-2 py-0.5 rounded-full border transition-all ${
+                                a.difficulty === d
+                                  ? d === 'easy'
+                                    ? 'bg-emerald-100 dark:bg-emerald-900/35 text-emerald-700 dark:text-emerald-400 border-emerald-200/60 dark:border-emerald-700/40'
+                                    : d === 'medium'
+                                      ? 'bg-amber-100 dark:bg-amber-900/35 text-amber-700 dark:text-amber-400 border-amber-200/60 dark:border-amber-700/40'
+                                      : 'bg-rose-100 dark:bg-rose-900/35 text-rose-700 dark:text-rose-400 border-rose-200/60 dark:border-rose-700/40'
+                                  : 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 border-transparent'
+                              }`}
+                            >
+                              {d.charAt(0).toUpperCase() + d.slice(1)}
+                            </button>
+                          ))}
+                        </div>
                         {a.weight && a.weight !== '0%' && (
                           <span className="text-xs bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 px-2 py-0.5 rounded-full font-semibold">
                             {a.weight}

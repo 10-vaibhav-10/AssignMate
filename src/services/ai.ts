@@ -60,14 +60,16 @@ async function callAI(payload: GroqPayload): Promise<string> {
 
   if (!res.ok) {
     /* Handle both our proxy error shape { error: "string" }
-       and Groq's native error shape { error: { message: "..." } } */
+       and provider native error shape { error: { message: "..." } } */
     type ErrBody = { error?: string | { message?: string } };
     const body = await res.json().catch(() => ({})) as ErrBody;
-    const msg =
+    const raw =
       typeof body.error === 'string'
         ? body.error
         : (body.error?.message ?? `AI service error ${res.status}`);
-    throw new Error(msg);
+    // Always include "[429]" prefix so callers can detect rate limits regardless
+    // of how the provider words the message ("exhausted", "quota exceeded", etc.)
+    throw new Error(res.status === 429 ? `[429] ${raw}` : raw);
   }
 
   type GroqResponse = { choices: Array<{ message: { content: string } }> };
@@ -86,8 +88,9 @@ const SYSTEM_PROMPT =
 function buildUserPrompt(assignment: Assignment): string {
   const days = getDaysUntilDue(assignment.dueDate);
   const maxOffset = Math.max(days - 1, 0);
-  return `I have an assignment with these details:
-Title: ${assignment.title}
+  return `Break down this university assignment into specific work tasks.
+
+Assignment: ${assignment.title}
 Subject: ${assignment.subject}
 Details: ${assignment.details || 'No additional details provided.'}
 Due in: ${days} day(s) (today is ${todayStr()})
@@ -96,9 +99,9 @@ Estimated effort: ${assignment.estimatedHours} hours
 
 Generate a JSON object with EXACTLY this structure:
 {
-  "explanation": "Plain-English explanation under 150 words for a student.",
+  "explanation": "1–2 sentences summarising what this assignment requires the student to produce.",
   "tasks": [
-    { "title": "Specific actionable task", "dueDateOffset": 2 }
+    { "title": "Specific work task", "dueDateOffset": 2 }
   ],
   "studyPlan": [
     { "date": "YYYY-MM-DD", "tasks": ["Task A", "Task B"] }
@@ -106,8 +109,8 @@ Generate a JSON object with EXACTLY this structure:
 }
 
 Rules:
-- "explanation" under 150 words.
-- "tasks": 3–7 specific items. "dueDateOffset" = integer days from today (0=today, max ${maxOffset}).
+- "explanation": describe only what needs to be produced/submitted — no advice about lateness, contacting instructors, or urgency.
+- "tasks": 3–7 concrete work steps directly related to completing this assignment (e.g. "Research topic X", "Write introduction", "Code the sorting algorithm"). No meta-tasks like contacting instructors or checking submission portals. "dueDateOffset" = integer days from today (0=today, max ${maxOffset}).
 - "studyPlan": one entry per day from today through due date; 1–3 tasks per day, evenly spread.
 - All dates in YYYY-MM-DD format.
 - No text outside the JSON object.`;
@@ -321,7 +324,7 @@ export async function extractAssignmentsFromOutline(
   const content = await callAI({
     model:           MODEL,        // 70B: better date arithmetic and section reasoning
     temperature:     0.1,
-    max_tokens:      2000,         // up to 7 assessments with rich details needs ~1 500–1 800 tokens
+    max_tokens:      4000,         // gemini-2.0-flash needs room for JSON response
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: OUTLINE_SYSTEM },
@@ -338,7 +341,7 @@ export async function analyzeAssignment(assignment: Assignment): Promise<AiRespo
   const content = await callAI({
     model:           MODEL,
     temperature:     0.3,
-    max_tokens:      1200,
+    max_tokens:      3000,         // gemini-2.0-flash needs room for study plan + tasks
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },

@@ -7,8 +7,8 @@ const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 
 const GEMINI_MODEL_MAP: Record<string, string> = {
-  'llama-3.3-70b-versatile': 'gemini-1.5-flash',
-  'llama-3.1-8b-instant':    'gemini-1.5-flash-8b',
+  'llama-3.3-70b-versatile': 'gemini-2.0-flash',
+  'llama-3.1-8b-instant':    'gemini-2.0-flash-lite',
 };
 
 /**
@@ -60,8 +60,8 @@ function aiProxy(
             try {
               const parsed = JSON.parse(body) as { model?: string };
               const mapped = parsed.model
-                ? (GEMINI_MODEL_MAP[parsed.model] ?? 'gemini-1.5-flash')
-                : 'gemini-1.5-flash';
+                ? (GEMINI_MODEL_MAP[parsed.model] ?? 'gemini-2.0-flash')
+                : 'gemini-2.0-flash';
               body = JSON.stringify({ ...parsed, model: mapped });
             } catch { /* send as-is */ }
           }

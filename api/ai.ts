@@ -32,9 +32,9 @@ const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat
  * Both are in Gemini's free tier with 1 M TPM.
  */
 const GEMINI_MODEL_MAP: Record<string, string> = {
-  'llama-3.3-70b-versatile': 'gemini-1.5-flash',     // full-quality analysis
-  'llama-3.1-8b-instant':    'gemini-1.5-flash-8b',  // fast structured extraction
-  'meta-llama/llama-4-scout-17b-16e-instruct':  'gemini-1.5-flash',      // vision / image extraction
+  'llama-3.3-70b-versatile':                   'gemini-2.0-flash',      // full-quality analysis
+  'llama-3.1-8b-instant':                      'gemini-2.0-flash-lite', // fast structured extraction
+  'meta-llama/llama-4-scout-17b-16e-instruct': 'gemini-2.0-flash',      // vision / image extraction
 };
 
 /** CORS headers — required for Capacitor (capacitor://localhost) cross-origin calls. */
@@ -109,8 +109,8 @@ export default async function handler(request: Request): Promise<Response> {
       try {
         const parsed = JSON.parse(body) as { model?: string };
         const mapped = parsed.model
-          ? (GEMINI_MODEL_MAP[parsed.model] ?? 'gemini-1.5-flash')
-          : 'gemini-1.5-flash';
+          ? (GEMINI_MODEL_MAP[parsed.model] ?? 'gemini-2.0-flash')
+          : 'gemini-2.0-flash';
         body = JSON.stringify({ ...parsed, model: mapped });
       } catch {
         /* malformed body — send as-is, let Gemini return the error */

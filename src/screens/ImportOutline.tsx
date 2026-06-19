@@ -14,6 +14,20 @@ type Step = 'upload' | 'extracting' | 'semester' | 'analyzing' | 'ratelimit' | '
 
 const RETRY_SECS = 65; // slightly over 60 s so the per-minute window definitely resets
 
+function hasExplicitDates(text: string): boolean {
+  const M = 'january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec';
+  // (?<!week ) prevents "Week 13 may be decided" from matching "13 may" as a date
+  const monthNextToNumber = new RegExp(
+    `(?<!week )\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(${M})\\b` +
+    `|\\b(${M})\\s+\\d{1,2}(?:st|nd|rd|th)?\\b` +
+    `|\\b(${M})\\s+\\d{4}\\b`,
+    'i',
+  );
+  const isoDate = /\b\d{4}-\d{2}-\d{2}\b/;
+  const slashDate = /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/;
+  return monthNextToNumber.test(text) || isoDate.test(text) || slashDate.test(text);
+}
+
 export default function ImportOutline() {
   const navigate = useNavigate();
   const addAssignment = useAssignmentStore((s) => s.add);
@@ -29,8 +43,10 @@ export default function ImportOutline() {
   const [extracted,     setExtracted]     = useState<ExtractedAssignment[]>([]);
   const [selected,      setSelected]      = useState<Set<number>>(new Set());
   const [adding,        setAdding]        = useState(false);
-  const [countdown,     setCountdown]     = useState(0);
-  const [semesterStart, setSemesterStart] = useState('');
+  const [countdown,        setCountdown]        = useState(0);
+  const [semesterStart,    setSemesterStart]    = useState('');
+  const [outlineHasDates,  setOutlineHasDates]  = useState(false);
+  const [showWeek1Override, setShowWeek1Override] = useState(false);
 
   /* Clean up countdown timer on unmount */
   useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
@@ -66,9 +82,11 @@ export default function ImportOutline() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
       const isRateLimit =
-        msg.toLowerCase().includes('rate') ||
+        msg.startsWith('[429]') ||
         msg.includes('429') ||
-        msg.toLowerCase().includes('rate-limited');
+        msg.toLowerCase().includes('rate') ||
+        msg.toLowerCase().includes('quota') ||
+        msg.toLowerCase().includes('exhaust');
 
       if (isRateLimit) {
         pendingTextRef.current = text;
@@ -106,10 +124,12 @@ export default function ImportOutline() {
       return;
     }
 
-    // Pause here so user can confirm their semester start date
+    // Pre-scan for calendar dates, then let user confirm semester start if needed
     rawTextRef.current = text;
     const todayIso = new Date().toISOString().slice(0, 10);
     setSemesterStart(todayIso);
+    setOutlineHasDates(hasExplicitDates(text));
+    setShowWeek1Override(false);
     setStep('semester');
   }
 
@@ -244,46 +264,99 @@ export default function ImportOutline() {
       {/* ── Semester start ───────────────────────────────────────── */}
       {step === 'semester' && (
         <div className="px-4 pt-6 space-y-4">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-2xl">📅</span>
-              <div>
-                <h2 className="font-extrabold text-gray-900 dark:text-white text-base leading-tight">
-                  When does Week 1 start?
-                </h2>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                  Needed to convert "Week 12" style deadlines into exact dates.
-                </p>
+
+          {outlineHasDates ? (
+            /* ── Path A: dates found in outline ── */
+            <>
+              <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl p-4 flex items-start gap-3">
+                <span className="text-2xl">📅</span>
+                <div>
+                  <p className="font-bold text-emerald-800 dark:text-emerald-300 text-sm">Dates found in your outline!</p>
+                  <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-0.5 leading-relaxed">
+                    Your outline already contains specific calendar dates — no Week 1 needed. AssignMate will read them directly from the document.
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <input
-              type="date"
-              value={semesterStart}
-              onChange={(e) => setSemesterStart(e.target.value)}
-              className="w-full mt-1 px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-            />
+              <Button fullWidth onClick={() => analyzeText(rawTextRef.current!)}>
+                <SparklesIcon className="w-4 h-4" />
+                Analyse with AI
+              </Button>
 
-            <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-2">
-              This is the Monday of your first week of semester / trimester.
-            </p>
-          </div>
+              <div className="flex items-center gap-3 px-1">
+                <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+                <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">OR</span>
+                <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+              </div>
 
-          <Button
-            fullWidth
-            onClick={() => analyzeText(rawTextRef.current!, semesterStart)}
-            disabled={!semesterStart}
-          >
-            <SparklesIcon className="w-4 h-4" />
-            Analyse with AI
-          </Button>
+              <button
+                onClick={() => setShowWeek1Override((v) => !v)}
+                className="w-full flex items-center justify-between bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl px-4 py-3 text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">🗓️</span>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800 dark:text-white">My outline also uses "Week X" dates</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Enter Week 1 to recalculate those deadlines instead</p>
+                  </div>
+                </div>
+                <svg className={`w-4 h-4 text-gray-400 transition-transform ${showWeek1Override ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
 
-          <button
-            onClick={() => analyzeText(rawTextRef.current!)}
-            className="w-full text-center text-xs text-gray-400 dark:text-gray-500 underline underline-offset-2 py-1"
-          >
-            Skip — my outline has exact calendar dates
-          </button>
+              {showWeek1Override && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+                  <input
+                    type="date"
+                    value={semesterStart}
+                    onChange={(e) => setSemesterStart(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <p className="text-[11px] text-gray-400 dark:text-gray-500">The Monday of your first week of semester / trimester.</p>
+                  <Button fullWidth onClick={() => analyzeText(rawTextRef.current!, semesterStart)} disabled={!semesterStart}>
+                    <SparklesIcon className="w-4 h-4" />
+                    Analyse with Week 1 dates
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : (
+            /* ── Path B: no dates found, Week 1 required ── */
+            <>
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-2xl p-4 flex items-start gap-3">
+                <span className="text-xl">⚠️</span>
+                <div>
+                  <p className="font-bold text-amber-800 dark:text-amber-300 text-sm">No calendar dates detected</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5 leading-relaxed">
+                    Your outline uses <strong>"Week X"</strong> style deadlines. Enter your Week 1 start date so AssignMate can calculate the exact due dates.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xl">📅</span>
+                  <div>
+                    <h2 className="font-extrabold text-gray-900 dark:text-white text-base leading-tight">When does Week 1 start?</h2>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Needed to convert "Week 12" style deadlines into exact dates.</p>
+                  </div>
+                </div>
+                <input
+                  type="date"
+                  value={semesterStart}
+                  onChange={(e) => setSemesterStart(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+                <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-2">The Monday of your first week of semester / trimester.</p>
+              </div>
+
+              <Button fullWidth onClick={() => analyzeText(rawTextRef.current!, semesterStart)} disabled={!semesterStart}>
+                <SparklesIcon className="w-4 h-4" />
+                Analyse with AI
+              </Button>
+            </>
+          )}
         </div>
       )}
 
@@ -339,11 +412,7 @@ export default function ImportOutline() {
           <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-2xl p-4 text-left w-full max-w-xs space-y-2">
             <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">⚡ Why does this happen?</p>
             <p className="text-xs text-amber-600 dark:text-amber-500 leading-relaxed">
-              Groq's free tier allows 30 requests/minute per key. Your PDF triggered the limit across all keys. It resets in 60 seconds, then it retries automatically.
-            </p>
-            <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 pt-1">Want to avoid this?</p>
-            <p className="text-xs text-amber-600 dark:text-amber-500 leading-relaxed">
-              Add more keys at <span className="font-medium">console.groq.com</span> (free accounts). Each key gets its own 30 req/min quota.
+              The AI service has a free-tier request limit per minute. Your PDF triggered the limit. It resets in about 60 seconds, then retries automatically.
             </p>
           </div>
 
@@ -385,8 +454,10 @@ export default function ImportOutline() {
 
           <div className="space-y-3">
             {extracted.map((a, i) => (
-              <button key={i} onClick={() => toggleSelect(i)}
-                className={`w-full text-left bg-white dark:bg-gray-800 rounded-2xl border-2 p-4 transition-all ${
+              <div key={i} role="button" tabIndex={0}
+                onClick={() => toggleSelect(i)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelect(i); } }}
+                className={`w-full text-left bg-white dark:bg-gray-800 rounded-2xl border-2 p-4 transition-all cursor-pointer ${
                   selected.has(i)
                     ? 'border-indigo-400 shadow-sm shadow-indigo-100 dark:shadow-indigo-900/30'
                     : 'border-gray-100 dark:border-gray-700 opacity-60'
@@ -443,7 +514,7 @@ export default function ImportOutline() {
                     <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed line-clamp-2">{a.details}</p>
                   </div>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
 

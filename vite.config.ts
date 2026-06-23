@@ -3,8 +3,21 @@ import type { Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENAI_URL     = 'https://api.openai.com/v1/chat/completions';
+const GROQ_URL       = 'https://api.groq.com/openai/v1/chat/completions';
+const GEMINI_URL     = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+
+// OpenRouter model IDs — maps the Llama "alias" names the client sends
+const OPENROUTER_MODEL_MAP: Record<string, string> = {
+  'llama-3.3-70b-versatile': 'meta-llama/llama-3.3-70b-instruct',
+  'llama-3.1-8b-instant':    'meta-llama/llama-3.3-70b-instruct',
+};
+
+const OPENAI_MODEL_MAP: Record<string, string> = {
+  'llama-3.3-70b-versatile': 'gpt-4o-mini',
+  'llama-3.1-8b-instant':    'gpt-4o-mini',
+};
 
 const GEMINI_MODEL_MAP: Record<string, string> = {
   'llama-3.3-70b-versatile': 'gemini-2.0-flash',
@@ -12,17 +25,23 @@ const GEMINI_MODEL_MAP: Record<string, string> = {
 };
 
 /**
- * Dev-server plugin: intercepts POST /api/ai and forwards to Gemini or Groq,
- * injecting the server-side API key so the browser never sees it.
+ * Dev-server plugin: intercepts POST /api/ai and forwards to the configured
+ * AI provider, injecting the server-side API key so the browser never sees it.
  *
  * Provider priority (matches api/ai.ts):
- *   1. GEMINI_API_KEY_1 … _N  (or GEMINI_API_KEY)  → Google Gemini (1 M TPM free)
- *   2. GROQ_API_KEY_1 … _N    (or GROQ_API_KEY)    → Groq fallback (6 k TPM free)
- *
- * Both support round-robin across multiple keys.
+ *   1. OPENROUTER_API_KEY_1 … _N  → OpenRouter (unified gateway, many models)
+ *   2. OPENAI_API_KEY_1 … _N      → OpenAI GPT-4o-mini
+ *   3. GEMINI_API_KEY_1 … _N      → Google Gemini (1M TPM free)
+ *   4. GROQ_API_KEY_1 … _N        → Groq fallback (6k TPM free)
  */
 function aiProxy(
-  provider: { url: string; keys: string[]; isGemini: boolean },
+  provider: {
+    url: string;
+    keys: string[];
+    modelMap: Record<string, string>;
+    fallback: string;
+    extraHeaders?: Record<string, string>;
+  },
 ): Plugin {
   let keyIndex = 0;
 
@@ -36,14 +55,9 @@ function aiProxy(
         if (provider.keys.length === 0) {
           res.statusCode = 503;
           res.setHeader('Content-Type', 'application/json');
-          res.end(
-            JSON.stringify({
-              error:
-                'No AI API key found. Add GEMINI_API_KEY_1=AIza... (recommended) ' +
-                'or GROQ_API_KEY_1=gsk_... to .env.local and restart the dev server. ' +
-                'Free Gemini key: https://aistudio.google.com/app/apikey',
-            }),
-          );
+          res.end(JSON.stringify({
+            error: 'No AI API key found. Add OPENROUTER_API_KEY_1=sk-or-... to .env.local and restart the dev server.',
+          }));
           return;
         }
 
@@ -54,14 +68,14 @@ function aiProxy(
         req.on('data', (chunk: Buffer) => { rawBody += chunk.toString(); });
         req.on('end', async () => {
 
-          /* Translate model names when using Gemini */
+          /* Translate model names to the provider's equivalents */
           let body = rawBody;
-          if (provider.isGemini) {
+          if (Object.keys(provider.modelMap).length > 0) {
             try {
               const parsed = JSON.parse(body) as { model?: string };
               const mapped = parsed.model
-                ? (GEMINI_MODEL_MAP[parsed.model] ?? 'gemini-2.0-flash')
-                : 'gemini-2.0-flash';
+                ? (provider.modelMap[parsed.model] ?? provider.fallback)
+                : provider.fallback;
               body = JSON.stringify({ ...parsed, model: mapped });
             } catch { /* send as-is */ }
           }
@@ -74,6 +88,7 @@ function aiProxy(
                 headers: {
                   'Content-Type': 'application/json',
                   Authorization: `Bearer ${key}`,
+                  ...provider.extraHeaders,
                 },
                 body,
               });
@@ -83,6 +98,9 @@ function aiProxy(
               }
 
               const text = await upstream.text();
+              if (upstream.status !== 200) {
+                console.error(`[ai-proxy] upstream ${upstream.status}:`, text.slice(0, 300));
+              }
               res.statusCode = upstream.status;
               res.setHeader('Content-Type', 'application/json');
               res.end(text);
@@ -106,46 +124,56 @@ function aiProxy(
   };
 }
 
+function collectKeys(env: Record<string, string>, prefix: string): string[] {
+  const keys: string[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const k = env[`${prefix}_${i}`]?.trim();
+    if (k) keys.push(k);
+  }
+  if (keys.length === 0 && env[prefix]?.trim()) keys.push(env[prefix].trim());
+  return keys;
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
-  /* Gemini keys take priority */
-  const geminiKeys: string[] = [];
-  for (let i = 1; i <= 10; i++) {
-    const k = env[`GEMINI_API_KEY_${i}`]?.trim();
-    if (k) geminiKeys.push(k);
-  }
-  if (geminiKeys.length === 0 && env.GEMINI_API_KEY?.trim()) {
-    geminiKeys.push(env.GEMINI_API_KEY.trim());
-  }
+  const openrouterKeys = collectKeys(env, 'OPENROUTER_API_KEY');
+  const openaiKeys     = collectKeys(env, 'OPENAI_API_KEY');
+  const geminiKeys     = collectKeys(env, 'GEMINI_API_KEY');
+  const groqKeys       = collectKeys(env, 'GROQ_API_KEY');
 
-  /* Groq fallback */
-  const groqKeys: string[] = [];
-  for (let i = 1; i <= 10; i++) {
-    const k = env[`GROQ_API_KEY_${i}`]?.trim();
-    if (k) groqKeys.push(k);
-  }
-  if (groqKeys.length === 0 && env.GROQ_API_KEY?.trim()) {
-    groqKeys.push(env.GROQ_API_KEY.trim());
-  }
+  let provider: {
+    url: string;
+    keys: string[];
+    modelMap: Record<string, string>;
+    fallback: string;
+    extraHeaders?: Record<string, string>;
+  };
 
-  let provider: { url: string; keys: string[]; isGemini: boolean };
-  if (geminiKeys.length > 0) {
+  if (openrouterKeys.length > 0) {
+    console.log(`[ai-proxy] Using OpenRouter — ${openrouterKeys.length} key${openrouterKeys.length > 1 ? 's' : ''} (llama-3.3-70b-instruct)`);
+    provider = {
+      url: OPENROUTER_URL,
+      keys: openrouterKeys,
+      modelMap: OPENROUTER_MODEL_MAP,
+      fallback: 'meta-llama/llama-3.3-70b-instruct',
+      extraHeaders: { 'HTTP-Referer': 'https://assignmate.app', 'X-Title': 'AssignMate' },
+    };
+  } else if (openaiKeys.length > 0) {
+    console.log(`[ai-proxy] Using OpenAI — ${openaiKeys.length} key${openaiKeys.length > 1 ? 's' : ''} (gpt-4o-mini)`);
+    provider = { url: OPENAI_URL, keys: openaiKeys, modelMap: OPENAI_MODEL_MAP, fallback: 'gpt-4o-mini' };
+  } else if (geminiKeys.length > 0) {
     console.log(`[ai-proxy] Using Gemini — ${geminiKeys.length} key${geminiKeys.length > 1 ? 's' : ''} (1M TPM free tier)`);
-    provider = { url: GEMINI_URL, keys: geminiKeys, isGemini: true };
+    provider = { url: GEMINI_URL, keys: geminiKeys, modelMap: GEMINI_MODEL_MAP, fallback: 'gemini-2.0-flash' };
   } else if (groqKeys.length > 0) {
     console.log(`[ai-proxy] Using Groq — ${groqKeys.length} key${groqKeys.length > 1 ? 's' : ''} (6k TPM free tier)`);
-    provider = { url: GROQ_URL, keys: groqKeys, isGemini: false };
+    provider = { url: GROQ_URL, keys: groqKeys, modelMap: {}, fallback: 'llama-3.3-70b-versatile' };
   } else {
-    console.warn('[ai-proxy] No API keys found. Add GEMINI_API_KEY_1 or GROQ_API_KEY_1 to .env.local');
-    provider = { url: GROQ_URL, keys: [], isGemini: false };
+    console.warn('[ai-proxy] No API keys found. Add OPENROUTER_API_KEY_1=sk-or-... to .env.local');
+    provider = { url: GROQ_URL, keys: [], modelMap: {}, fallback: 'llama-3.3-70b-versatile' };
   }
 
   return {
-    plugins: [
-      react(),
-      tailwindcss(),
-      aiProxy(provider),
-    ],
+    plugins: [react(), tailwindcss(), aiProxy(provider)],
   };
 });

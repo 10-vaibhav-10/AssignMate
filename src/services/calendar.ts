@@ -95,6 +95,26 @@ export async function downloadICalendar(assignments: Assignment[]): Promise<void
 }
 
 /**
+ * Build a Google Calendar "add event" URL for a single assignment.
+ * Opens the Google Calendar event creation form pre-filled.
+ * Dates use the YYYYMMDD/YYYYMMDD format (literal slash — not URL-encoded).
+ */
+export function generateGoogleCalendarUrl(assignment: Assignment): string {
+  const start = assignment.dueDate.replace(/-/g, '');
+  // All-day events: end date is the following day (Google Calendar convention)
+  const endD = new Date(assignment.dueDate + 'T00:00:00');
+  endD.setDate(endD.getDate() + 1);
+  const end = endD.toISOString().slice(0, 10).replace(/-/g, '');
+
+  const text    = encodeURIComponent(assignment.title);
+  const details = encodeURIComponent(
+    [assignment.subject, assignment.details?.slice(0, 300)].filter(Boolean).join(' — '),
+  );
+
+  return `https://calendar.google.com/calendar/r/eventedit?action=TEMPLATE&text=${text}&dates=${start}/${end}&details=${details}`;
+}
+
+/**
  * Share or download a JSON backup of all app data.
  *
  * On Android: triggers the share sheet so the user can save to Drive,

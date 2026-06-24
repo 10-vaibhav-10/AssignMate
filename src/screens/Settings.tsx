@@ -4,7 +4,7 @@ import { useAssignmentStore } from '../stores/assignmentStore';
 import { useTaskStore } from '../stores/taskStore';
 import { storage } from '../services/storage';
 import { toast } from '../stores/toastStore';
-import { downloadICalendar, shareOrDownloadJson } from '../services/calendar';
+import { downloadICalendar, shareOrDownloadJson, generateGoogleCalendarUrl } from '../services/calendar';
 import {
   requestNotificationPermission,
   getNotificationPermission,
@@ -27,6 +27,7 @@ export default function Settings() {
   const loadTasks       = useTaskStore((s) => s.load);
 
   const [showClearDialog,  setShowClearDialog]  = useState(false);
+  const [showGCalModal,    setShowGCalModal]    = useState(false);
   const [permState,        setPermState]        = useState<NotificationPermission>(getNotificationPermission());
   const [notifRequesting,  setNotifRequesting]  = useState(false);
   const [exactAlarmOk,     setExactAlarmOk]     = useState(true);
@@ -386,17 +387,28 @@ export default function Settings() {
             Everything stays {isAndroid ? 'on your device' : 'in your browser'} . nothing is uploaded anywhere.
           </p>
 
-          <Button
-            fullWidth
-            onClick={handleExportCalendar}
-            variant="secondary"
-            className="mb-2 flex items-center gap-2 justify-center"
-          >
-            <DownloadIcon className="w-4 h-4" />
-            Add to Calendar
-          </Button>
+          {/* Calendar export row */}
+          <div className="flex gap-2 mb-1">
+            <button
+              onClick={handleExportCalendar}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60 transition-colors"
+            >
+              <DownloadIcon className="w-4 h-4" />
+              Download .ics
+            </button>
+            <button
+              onClick={() => {
+                if (assignments.length === 0) { toast.warning('No assignments to export yet.'); return; }
+                setShowGCalModal(true);
+              }}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+            >
+              <span className="text-base leading-none">📅</span>
+              Google Calendar
+            </button>
+          </div>
           <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 text-center">
-            Opens in Google Calendar, Apple Calendar, or Outlook
+            .ics works with Apple Calendar &amp; Outlook · Google Calendar adds events one by one
           </p>
 
           <Button
@@ -449,6 +461,58 @@ export default function Settings() {
         onConfirm={handleClearAll}
         onCancel={() => setShowClearDialog(false)}
       />
+
+      {/* ── Google Calendar modal ────────────────────────────── */}
+      {showGCalModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-end"
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowGCalModal(false); }}
+        >
+          <div className="bg-white dark:bg-gray-800 rounded-t-3xl w-full max-h-[80vh] flex flex-col shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 dark:border-gray-700 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📅</span>
+                <h3 className="font-bold text-gray-900 dark:text-white text-base">Add to Google Calendar</h3>
+              </div>
+              <button
+                onClick={() => setShowGCalModal(false)}
+                className="w-7 h-7 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400 shrink-0">
+              Tap an assignment to open it in Google Calendar, then click <strong>Save</strong>.
+            </p>
+
+            {/* Assignment list */}
+            <div className="overflow-y-auto flex-1 px-4 pb-6 space-y-2">
+              {assignments.map((a) => (
+                <a
+                  key={a.id}
+                  href={generateGoogleCalendarUrl(a)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/60 rounded-xl px-4 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/30 active:bg-blue-100 transition-colors group"
+                >
+                  <div className="min-w-0 flex-1 mr-3">
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">{a.title}</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                      {a.subject} · Due {a.dueDate}
+                    </p>
+                  </div>
+                  <span className="text-blue-500 dark:text-blue-400 text-xs font-semibold shrink-0 group-hover:underline">
+                    Add →
+                  </span>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -181,12 +181,12 @@ function extractRelevantSections(fullText: string): string {
   const parts: string[] = [];
 
   if (plannerIdx !== -1) {
-    // Planner ends where the formal table begins (or after 5 500 chars).
-    // 5 500 chars captures ~12 weeks of dense planner rows (needed for
+    // Planner ends where the formal table begins (or after 5 000 chars).
+    // 5 000 chars captures ~12 weeks of dense planner rows (needed for
     // subjects where Assessment 4 falls in Week 11-12).
     const end = (tableIdx !== -1 && tableIdx > plannerIdx)
-      ? Math.min(plannerIdx + 5500, tableIdx)
-      : plannerIdx + 5500;
+      ? Math.min(plannerIdx + 5000, tableIdx)
+      : plannerIdx + 5000;
     parts.push(
       '=== SECTION A: WEEKLY PLANNER ===\n' +
       fullText.slice(plannerIdx, end),
@@ -205,10 +205,10 @@ function extractRelevantSections(fullText: string): string {
   }
 
   if (detailsIdx !== -1) {
-    // Section 3 gets up to 5 000 chars — budget freed by the planner increase
+    // Section 3 gets up to 4 000 chars — keep total prompt under ~3 000 tokens
     parts.push(
       '=== SECTION C: ASSESSMENT DETAILS (Section 3) ===\n' +
-      fullText.slice(detailsIdx, detailsIdx + 5000),
+      fullText.slice(detailsIdx, detailsIdx + 4000),
     );
   }
 
@@ -351,7 +351,7 @@ export async function extractAssignmentsFromOutline(
   const content = await callAI({
     model:           MODEL,        // 70B: better date arithmetic and section reasoning
     temperature:     0.1,
-    max_tokens:      4000,         // gemini-2.0-flash needs room for JSON response
+    max_tokens:      1500,         // 6 assessments × ~200 tokens each = ~1200 tokens max
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: OUTLINE_SYSTEM },

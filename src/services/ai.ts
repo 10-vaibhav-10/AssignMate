@@ -181,10 +181,12 @@ function extractRelevantSections(fullText: string): string {
   const parts: string[] = [];
 
   if (plannerIdx !== -1) {
-    // Planner ends where the formal table begins (or after 4 500 chars)
+    // Planner ends where the formal table begins (or after 5 500 chars).
+    // 5 500 chars captures ~12 weeks of dense planner rows (needed for
+    // subjects where Assessment 4 falls in Week 11-12).
     const end = (tableIdx !== -1 && tableIdx > plannerIdx)
-      ? Math.min(plannerIdx + 4500, tableIdx)
-      : plannerIdx + 4500;
+      ? Math.min(plannerIdx + 5500, tableIdx)
+      : plannerIdx + 5500;
     parts.push(
       '=== SECTION A: WEEKLY PLANNER ===\n' +
       fullText.slice(plannerIdx, end),
@@ -203,10 +205,10 @@ function extractRelevantSections(fullText: string): string {
   }
 
   if (detailsIdx !== -1) {
-    // Section 3 gets the most space — up to 6 000 chars of detailed descriptions
+    // Section 3 gets up to 5 000 chars — budget freed by the planner increase
     parts.push(
       '=== SECTION C: ASSESSMENT DETAILS (Section 3) ===\n' +
-      fullText.slice(detailsIdx, detailsIdx + 6000),
+      fullText.slice(detailsIdx, detailsIdx + 5000),
     );
   }
 
@@ -255,11 +257,36 @@ The text below has been pre-extracted into up to three labelled sections:
 • Strip trimester codes (T126, T226, etc.) from the name.
 
 ━━━ WHICH ASSESSMENTS TO INCLUDE ━━━
-INCLUDE: Every row in SECTION B - quizzes, reports, projects, presentations, group work,
-formative items (0% weight). Each row = one assignment object in the output.
+INCLUDE: Every row in SECTION B — quizzes, reports, projects, presentations, group work,
+formative items (0% weight), tutorial participation/exercises. Each row = exactly ONE
+assignment object in the output.
 
-EXCLUDE: Anything NOT in Section B - weekly readings, tutorial prep, lecture activities,
-"Summative graded" sessions, "Discussion on…" entries, review questions.
+EXCLUDE: Anything NOT listed as a row in Section B — weekly readings, tutorial prep,
+lecture activities, "Summative graded" weekly entries, "Discussion on…" entries,
+review questions, "Formative not graded" entries, and final exam weeks
+(Weeks 13–14 "Examinations") unless they appear as a row in Section B.
+
+━━━ ONE-TO-ONE MAPPING RULE ━━━
+Each row in SECTION B produces EXACTLY ONE assignment object in the output — never split
+one Section B row into multiple objects, even if the row has two dates or events.
+
+Critical patterns that trip up AI models — apply these rules strictly:
+
+  a) MULTI-EVENT ROW: One Section B row may cover two events, e.g.:
+       "Assessment 2: Database Project — Week 7 (Project) + Week 8 (Demo)"
+     This is ONE assessment. Output ONE object. Use the LATER date as dueDate.
+
+  b) MULTI-WEEK PLANNER ENTRIES FOR ONE ROW: The planner may show the same assessment
+     label in two different week rows, e.g.:
+       Week 11: "Assessment 4 due"
+       Week 12: "Assessment 4: Project demonstration due"
+     Both entries belong to the same Section B row. Output ONE object using Week 12's date.
+
+  c) ONGOING TUTORIAL EXERCISES ("Summative graded"): The planner shows "Summative graded"
+     in every week row (e.g. Weeks 2–11). These are NOT individual assessments — they are
+     the weekly contributions that make up the single "Tutorial exercises" row in Section B.
+     Output ONE object for that Section B row; use the final week's end date (Sunday) as
+     the dueDate. Do NOT output one object per "Summative graded" week.
 
 ━━━ CALCULATING EXACT DUE DATES ━━━
 
@@ -301,13 +328,13 @@ Return ONLY valid JSON - no markdown, no code fences, nothing outside the object
 }
 
 Difficulty:
-  easy   = formative quiz, short in-class test, attendance task
+  easy   = formative quiz, short in-class test, tutorial participation (ongoing)
   medium = report/essay 1 000–2 000 w, presentation, group demo
   hard   = report/project 2 000 w+, major group project with code, individual capstone
 
 EstimatedHours:
   2  = quiz or short in-class test
-  5  = short report ≤ 1 500 w or short presentation
+  5  = tutorial participation (ongoing) or short report ≤ 1 500 w or short presentation
   10 = medium report 1 500–2 500 w, group project, or demo
   20 = major individual project or report ≥ 2 500 w
 

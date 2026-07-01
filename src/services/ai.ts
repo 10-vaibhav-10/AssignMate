@@ -1,0 +1,392 @@
+import type { AiResponse, Assignment, OutlineParseResult } from '../types';
+import { getDaysUntilDue, todayStr } from '../utils';
+
+/**
+ * All AI calls go through our own /api/ai proxy endpoint.
+ *
+ * In development: the Vite plugin in vite.config.ts intercepts this route
+ *   and forwards the request to whichever provider has keys configured in
+ *   .env.local, tried in this order: OpenRouter → OpenAI → Gemini → Groq.
+ *
+ * In production (Vercel): api/ai.ts is a serverless function that does the same
+ *   using the equivalent environment variables set in the Vercel dashboard.
+ *
+ * The API key NEVER reaches the browser.
+ *
+ * On Android (Capacitor): VITE_API_BASE_URL is set to the deployed Vercel URL
+ * in .env.android so the app calls https://your-app.vercel.app/api/ai.
+ * On web: VITE_API_BASE_URL is empty → relative URL /api/ai (same origin).
+ */
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+const API_URL  = `${API_BASE}/api/ai`;
+
+// 70B for per-assignment analysis AND outline extraction (complex date math needs smarter model)
+const MODEL      = 'llama-3.3-70b-versatile';
+// 8B-instant kept as a constant for reference; outline extraction now uses the full model
+const MODEL_FAST = 'llama-3.1-8b-instant';
+void MODEL_FAST; // suppress unused-variable warning
+
+/* ── Shared fetch helper ─────────────────────────────────────────── */
+
+type AiPayload = {
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  response_format?: { type: 'json_object' };
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: unknown }>;
+};
+
+async function callAI(payload: AiPayload): Promise<string> {
+  // 90-second timeout — Vercel functions run up to 60 s; the extra 30 s covers
+  // cold-start overhead and network round-trips between browser → Vercel → upstream provider.
+  const controller = new AbortController();
+  const timeoutId  = setTimeout(() => controller.abort(), 90_000);
+
+  let res: Response;
+  try {
+    res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('AI request timed out. Please try again ! It usually works on the second attempt.');
+    }
+    throw new Error('Could not reach the AI service. Check your internet connection and try again.');
+  }
+  clearTimeout(timeoutId);
+
+  if (!res.ok) {
+    /* Handle both our proxy error shape { error: "string" }
+       and provider native error shape { error: { message: "..." } } */
+    type ErrBody = { error?: string | { message?: string } };
+    const body = await res.json().catch(() => ({})) as ErrBody;
+    const raw =
+      typeof body.error === 'string'
+        ? body.error
+        : (body.error?.message ?? `AI service error ${res.status}`);
+    // Always include "[429]" prefix so callers can detect rate limits regardless
+    // of how the provider words the message ("exhausted", "quota exceeded", etc.)
+    throw new Error(res.status === 429 ? `[429] ${raw}` : raw);
+  }
+
+  type AiResponseBody = { choices: Array<{ message: { content: string } }> };
+  const data = (await res.json()) as AiResponseBody;
+  const content = data.choices[0]?.message?.content;
+  if (!content) throw new Error('Empty response from AI.');
+  return content;
+}
+
+/* ── Prompts ─────────────────────────────────────────────────────── */
+
+const SYSTEM_PROMPT =
+  'You are an academic assistant that helps students plan their assignments. ' +
+  'Always respond with valid JSON only. Do not include markdown, code fences, or any text outside the JSON object.';
+
+function buildUserPrompt(assignment: Assignment): string {
+  const days = getDaysUntilDue(assignment.dueDate);
+  const maxOffset = Math.max(days - 1, 0);
+  // The app derives the student's day-by-day study plan directly from these
+  // tasks' dueDateOffset values (grouping tasks that share a date) — there is
+  // no separate "study plan" for the AI to generate. Spreading the offsets
+  // well here IS the study plan, so the distribution guidance below matters.
+  const taskCount = assignment.estimatedHours >= 15 ? '6–7' : assignment.estimatedHours >= 8 ? '5–6' : '3–5';
+  return `Break down this university assignment into specific work tasks, spaced out into a realistic day-by-day plan.
+
+Assignment: ${assignment.title}
+Subject: ${assignment.subject}
+Details: ${assignment.details || 'No additional details provided.'}
+Due in: ${days} day(s) (today is ${todayStr()})
+Difficulty: ${assignment.difficulty}
+Estimated effort: ${assignment.estimatedHours} hours
+
+Generate a JSON object with EXACTLY this structure:
+{
+  "explanation": "1–2 sentences summarising what this assignment requires the student to produce.",
+  "tasks": [
+    { "title": "Specific work task", "dueDateOffset": 2 }
+  ]
+}
+
+Rules:
+- "explanation": describe only what needs to be produced/submitted — no advice about lateness, contacting instructors, or urgency.
+- "tasks": ${taskCount} concrete work steps directly related to completing this assignment (e.g. "Research topic X", "Write introduction", "Code the sorting algorithm"), ordered the way the student would actually do them (research/planning first, then production, then review/polish last). No meta-tasks like contacting instructors or checking submission portals.
+- "dueDateOffset" = integer days from today (0 = today, max ${maxOffset}) — this is when that task's work session happens, not a deadline. Spread offsets across the available time instead of clustering:
+  - If ${maxOffset} >= 4: give each task a distinct, roughly evenly-spaced offset (e.g. for 5 tasks over 10 days: 0, 2, 5, 7, 9). Leave the due date itself (offset ${maxOffset}) for final review/submission only, not new work, when ${maxOffset} > 2.
+  - If ${maxOffset} is small (0–3 days): it's fine for 2 tasks to share a day, but still order them earliest-first.
+- All dates in YYYY-MM-DD format.
+- No text outside the JSON object.`;
+}
+
+const OUTLINE_SYSTEM =
+  'You are an academic assistant that extracts assessment details from university subject outlines. ' +
+  'Always respond with valid JSON only. No markdown, no code fences, no text outside the JSON.';
+
+/**
+ * Smart section extractor for KOI (King's Own Institute) subject outlines.
+ *
+ * Problem with naive text.slice(0, 12000):
+ *   • Includes noisy Weekly Planner rows ("Summative graded", "Discussion on Java…")
+ *     every week, which the AI mistakenly treats as assessments.
+ *   • Often misses Section 3 (pages 11–17) which has the actual per-assessment
+ *     details, word limits, and submission instructions.
+ *
+ * This function instead surgically extracts three labelled sections:
+ *   A. Weekly Planner   — Week 1 calendar date + per-week due-date markers
+ *   B. Section 2.8      — formal assessment table (definitive list)
+ *   C. Section 3        — per-assessment details, word limits, submission method
+ *
+ * Character budget (safe for the Groq 6k TPM fallback tier, the tightest of the four providers):
+ *   Planner 4 500 + Table 2 500 + Details 6 000 = 13 000 chars ≈ 3 250 tokens
+ *   + prompt instructions ≈ 750 tokens + max_tokens 2 000 = 6 000 TPM ✓
+ */
+function extractRelevantSections(fullText: string): string {
+  const len = fullText.length;
+
+  /** Return the index of the first regex match, or -1 if none match. */
+  function findSection(patterns: RegExp[]): number {
+    let best = len;
+    for (const pat of patterns) {
+      const m = pat.exec(fullText);
+      if (m && m.index < best) best = m.index;
+    }
+    return best < len ? best : -1;
+  }
+
+  // ── Locate section boundaries ──────────────────────────────────────
+
+  // Section A: Weekly Planner — starts at the table column-header row
+  const plannerIdx = findSection([
+    /week\s*\(\s*beginning\s*\)/i,          // "Week (beginning)  Topics  Readings  Expected Work"
+    /2\.4\s+subject\s+content/i,            // "2.4 Subject Content and Structure"
+    /subject\s+content\s+and\s+structure/i,
+  ]);
+
+  // Section B: Formal Assessment Table (Section 2.8)
+  const tableIdx = findSection([
+    /2\.8\s+student\s+(assessment|assignment)/i,     // "2.8 Student Assessment"
+    /student\s+assignment\s+table/i,
+    /assessment\s*\/\s*assignment\s+type\s+when\s+assessed/i,
+    /assignment\s*\/\s*formative\s+task\s+when\s+assessed/i, // BUS709 header
+  ]);
+
+  // Section C: Per-assessment details (Section 3)
+  const detailsIdx = findSection([
+    /\b3\s+assessment\s+details\b/i,         // "3 Assessment Details"
+    /\b3\s+assignment\s+details\b/i,          // "3 Assignment Details" (BUS709)
+    /\bassessment\s+details\s+and\s+criteria\b/i,
+    /\b3\.1\b.{0,50}(assessment|assignment)\s+\d/i, // "3.1 Assessment 1"
+  ]);
+
+  // ── Slice each section ────────────────────────────────────────────
+
+  const parts: string[] = [];
+
+  if (plannerIdx !== -1) {
+    // Planner ends where the formal table begins (or after 5 000 chars).
+    // 5 000 chars captures ~12 weeks of dense planner rows (needed for
+    // subjects where Assessment 4 falls in Week 11-12).
+    const end = (tableIdx !== -1 && tableIdx > plannerIdx)
+      ? Math.min(plannerIdx + 5000, tableIdx)
+      : plannerIdx + 5000;
+    parts.push(
+      '=== SECTION A: WEEKLY PLANNER ===\n' +
+      fullText.slice(plannerIdx, end),
+    );
+  }
+
+  if (tableIdx !== -1) {
+    // Table ends where Section 3 begins (or after 2 500 chars)
+    const end = (detailsIdx !== -1 && detailsIdx > tableIdx)
+      ? Math.min(tableIdx + 2500, detailsIdx)
+      : tableIdx + 2500;
+    parts.push(
+      '=== SECTION B: FORMAL ASSESSMENT TABLE (Section 2.8) ===\n' +
+      fullText.slice(tableIdx, end),
+    );
+  }
+
+  if (detailsIdx !== -1) {
+    // Section 3 gets up to 4 000 chars — keep total prompt under ~3 000 tokens
+    parts.push(
+      '=== SECTION C: ASSESSMENT DETAILS (Section 3) ===\n' +
+      fullText.slice(detailsIdx, detailsIdx + 4000),
+    );
+  }
+
+  if (parts.length === 0) {
+    // Fallback: if no KOI section patterns matched, use a naive slice
+    return fullText.slice(0, 12000);
+  }
+
+  return parts.join('\n\n');
+}
+
+function buildWeekTable(semesterStart: string): string {
+  const [y, m, day] = semesterStart.split('-').map(Number);
+  const lines = [
+    'USER-PROVIDED SEMESTER WEEK REFERENCE (authoritative — use these exact Monday start dates; ignore any Week 1 date found in Section A):',
+  ];
+  for (let w = 1; w <= 16; w++) {
+    // Calendar-day arithmetic (add to the day-of-month, let Date normalise
+    // month/year rollover) — NOT base.getTime() + N*86_400_000. Adding raw
+    // milliseconds crosses Sydney's AEDT/AEST DST changeover (~Apr/Oct)
+    // mid-semester, which inserts/removes an hour and lands the computed
+    // instant short of local midnight, reporting the day before the real
+    // Monday for whichever week contains the transition.
+    const d = new Date(y, m - 1, day + (w - 1) * 7);
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    lines.push(`  Week ${w} = ${dateStr}`);
+  }
+  return lines.join('\n');
+}
+
+function buildOutlinePrompt(text: string, semesterStart?: string): string {
+  const extracted = extractRelevantSections(text);
+  const weekRef   = semesterStart ? '\n\n' + buildWeekTable(semesterStart) : '';
+
+  return `Extract every formally assessed item from this university subject outline. Today is ${todayStr()}.${weekRef}
+
+The text below has been pre-extracted into up to three labelled sections:
+
+  SECTION A - WEEKLY PLANNER: Contains the Week 1 calendar date and, for each week row,
+    an "Expected Work" entry that states when each assessment is due (e.g. "Assessment 2:
+    Quiz due", "Assignment 1 Due Sunday 11:59 pm"). Use this ONLY for dates — ignore all
+    lecture topics, readings, tutorial activities, and "Summative graded" entries.
+
+  SECTION B - FORMAL ASSESSMENT TABLE (Section 2.8): The DEFINITIVE LIST of all assessed
+    items. Each row is one assignment. Use ONLY the rows in this table to decide which
+    assessments exist. Do NOT invent assessments not listed here.
+
+  SECTION C - ASSESSMENT DETAILS (Section 3): Detailed per-assessment descriptions —
+    word limits, deliverables, submission method. Use these for the "details" field.
+
+━━━ SUBJECT NAME ━━━
+• Format: "SUBJECTCODE Full Name in Title Case"  e.g. "ICT711 Programming and Algorithms"
+• Strip trimester codes (T126, T226, etc.) from the name.
+
+━━━ WHICH ASSESSMENTS TO INCLUDE ━━━
+INCLUDE: Every row in SECTION B — quizzes, reports, projects, presentations, group work,
+formative items (0% weight), tutorial participation/exercises. Each row = exactly ONE
+assignment object in the output.
+
+EXCLUDE: Anything NOT listed as a row in Section B — weekly readings, tutorial prep,
+lecture activities, "Summative graded" weekly entries, "Discussion on…" entries,
+review questions, "Formative not graded" entries, and final exam weeks
+(Weeks 13–14 "Examinations") unless they appear as a row in Section B.
+
+━━━ ONE-TO-ONE MAPPING RULE ━━━
+Each row in SECTION B produces EXACTLY ONE assignment object in the output — never split
+one Section B row into multiple objects, even if the row has two dates or events.
+
+Critical patterns that trip up AI models — apply these rules strictly:
+
+  a) MULTI-EVENT ROW: One Section B row may cover two events, e.g.:
+       "Assessment 2: Database Project — Week 7 (Project) + Week 8 (Demo)"
+     This is ONE assessment. Output ONE object. Use the LATER date as dueDate.
+
+  b) MULTI-WEEK PLANNER ENTRIES FOR ONE ROW: The planner may show the same assessment
+     label in two different week rows, e.g.:
+       Week 11: "Assessment 4 due"
+       Week 12: "Assessment 4: Project demonstration due"
+     Both entries belong to the same Section B row. Output ONE object using Week 12's date.
+
+  c) ONGOING TUTORIAL EXERCISES ("Summative graded"): The planner shows "Summative graded"
+     in every week row (e.g. Weeks 2–11). These are NOT individual assessments — they are
+     the weekly contributions that make up the single "Tutorial exercises" row in Section B.
+     Output ONE object for that Section B row; use the final week's end date (Sunday) as
+     the dueDate. Do NOT output one object per "Summative graded" week.
+
+━━━ CALCULATING EXACT DUE DATES ━━━
+
+Step 1 - In SECTION A, find the row for "Week 1" and read its calendar date
+         (e.g. "Week 1  2 March 2026" → Week 1 starts 2 March 2026).
+Step 2 - Week N start date = Week1StartDate + (N − 1) × 7 days.
+Step 3 - Find this assessment's row in SECTION A "Expected Work" column, then apply:
+
+  Marker in Section A row                              → Due date
+  ─────────────────────────────────────────────────────────────────
+  "Due Sunday 11:59 pm" / "Sunday midnight" (Week N)  → Week N start + 6 days
+  "Due by Tuesday [time]" (Week N)                    → Week N start + 1 day
+  "Due by Monday [time]" / "Monday 9am" (Week N)      → Week N start + 0 days
+  "In class" / "in workshop" / "Quiz" (Week N)        → Week N start + 0 days
+  "Demo … conducted in workshop" (Week N)             → Week N start + 0 days
+  Explicit calendar date anywhere (e.g. "28 April")  → use that date directly
+  "Weeks M–N" range                                   → Week N start + 6 days (Sunday)
+  No marker found                                     → Week N start + 6 days (Sunday)
+
+━━━ DETAILS FIELD ━━━
+Write 2–3 sentences from SECTION C covering: what to submit, word/time limit,
+submission method, key deliverables. If Section C has no entry for an item,
+write a brief description inferred from Section B.
+
+━━━ OUTPUT FORMAT ━━━
+Return ONLY valid JSON - no markdown, no code fences, nothing outside the object:
+{
+  "subject": "SUBJECTCODE Full Subject Name",
+  "assignments": [
+    {
+      "title": "Exact name from Section B",
+      "details": "2–3 sentences from Section C.",
+      "dueDate": "YYYY-MM-DD",
+      "difficulty": "easy|medium|hard",
+      "estimatedHours": 2,
+      "weight": "25%"
+    }
+  ]
+}
+
+Difficulty:
+  easy   = formative quiz, short in-class test, tutorial participation (ongoing)
+  medium = report/essay 1 000–2 000 w, presentation, group demo
+  hard   = report/project 2 000 w+, major group project with code, individual capstone
+
+EstimatedHours:
+  2  = quiz or short in-class test
+  5  = tutorial participation (ongoing) or short report ≤ 1 500 w or short presentation
+  10 = medium report 1 500–2 500 w, group project, or demo
+  20 = major individual project or report ≥ 2 500 w
+
+Subject outline text (pre-extracted sections):
+${extracted}`;
+}
+
+/* ── Public API ──────────────────────────────────────────────────── */
+
+export async function extractAssignmentsFromOutline(
+  outlineText: string,
+  semesterStart?: string,
+): Promise<OutlineParseResult> {
+  const content = await callAI({
+    model:           MODEL,        // 70B: better date arithmetic and section reasoning
+    temperature:     0.1,
+    max_tokens:      1500,         // 6 assessments × ~200 tokens each = ~1200 tokens max
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: OUTLINE_SYSTEM },
+      { role: 'user',   content: buildOutlinePrompt(outlineText, semesterStart) },
+    ],
+  });
+
+  const result = JSON.parse(content) as OutlineParseResult;
+  if (!result.assignments?.length) throw new Error('No assignments found in this document.');
+  return result;
+}
+
+export async function analyzeAssignment(assignment: Assignment): Promise<AiResponse> {
+  const content = await callAI({
+    model:           MODEL,
+    temperature:     0.3,
+    max_tokens:      1000,         // explanation + up to 7 tasks — no separate study plan to generate
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user',   content: buildUserPrompt(assignment) },
+    ],
+  });
+
+  return JSON.parse(content) as AiResponse;
+}

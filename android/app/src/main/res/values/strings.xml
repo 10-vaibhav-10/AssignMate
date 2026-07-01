@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AssignMate</string>
+    <string name="title_activity_main">AssignMate</string>
+    <string name="package_name">com.assignmate.app</string>
+    <string name="custom_url_scheme">com.assignmate.app</string>
+</resources>

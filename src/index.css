@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+/* Class-based dark mode — applied when <html> has class="dark" */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Safe-area inset CSS variables — populated by the browser from the device's
+ * reported insets (status bar, gesture handle, 3-button nav row, notch, etc.).
+ * viewport-fit=cover in index.html is required for these to be non-zero.
+ *
+ * Usage:  padding-bottom: var(--sab);
+ *         inline style:   paddingBottom: 'env(safe-area-inset-bottom, 0px)'
+ */
+:root {
+  --sat: env(safe-area-inset-top,    0px);   /* status bar height     */
+  --sab: env(safe-area-inset-bottom, 0px);   /* nav bar / gesture bar */
+  --sal: env(safe-area-inset-left,   0px);   /* landscape left cutout */
+  --sar: env(safe-area-inset-right,  0px);   /* landscape right cutout*/
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  /* Prevent rubber-band overscroll on Android/iOS */
+  overscroll-behavior: none;
+  /*
+   * Lock font size at 100% — Android respects the system "Font size" setting
+   * which can inflate or shrink all text and break layouts.
+   * text-size-adjust: none would prevent ALL scaling; 100% keeps accessibility
+   * scaling off but still allows the user to manually zoom.
+   */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI Variable Display',
+    'Segoe UI', system-ui, Roboto, sans-serif;
+  background: #ede8ff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Remove blue tap-highlight flash on Android WebView */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * Prevent accidental text-selection on interactive elements (buttons, nav,
+ * cards) — long-pressing should not trigger the OS selection handles.
+ * Text content (paragraphs, headings) retains default selection behaviour.
+ */
+button, a, nav, label {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/*
+ * Android WebView auto-zooms into any input whose font-size < 16px.
+ * Setting a minimum of 16px on all inputs prevents that jarring zoom,
+ * while still rendering at the correct visual size via transform on parent.
+ */
+input, textarea, select {
+  font-size: max(16px, 1em);
+}
+
+html.dark body {
+  background: #08080f;
+}
+
+#root {
+  display: flex;
+  justify-content: center;
+  /* dvh fills the full physical screen including the area behind system bars
+     when edge-to-edge is active; svh is a graceful fallback for older engines. */
+  min-height: 100svh;
+  min-height: 100dvh;
+}
+
+/* Smooth date picker */
+input[type='date']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.5;
+}
+
+/* Checkbox accent */
+input[type='checkbox'] {
+  accent-color: #7c3aed;
+}
+
+/* Hide scrollbars */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Line clamp utilities */
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Glow pulse for active elements */
+@keyframes glow-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Subtle float animation for hero decorations */
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(-12px) scale(1.04); }
+}
+
+.animate-float {
+  animation: float-slow 6s ease-in-out infinite;
+}

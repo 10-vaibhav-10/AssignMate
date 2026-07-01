@@ -1,0 +1,18 @@
+{
+  "name": "AssignMate",
+  "short_name": "AssignMate",
+  "description": "Smart assignment tracker with AI study plans and Pomodoro timer",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#7c3aed",
+  "background_color": "#ede8ff",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/favicon.svg",  "sizes": "any",     "type": "image/svg+xml" }
+  ],
+  "categories": ["education", "productivity"],
+  "lang": "en"
+}
